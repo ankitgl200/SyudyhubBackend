@@ -24,16 +24,28 @@ if (!fs.existsSync(UPLOADS_DIR)) {
 // Serve static uploads
 app.use('/uploads', express.static(UPLOADS_DIR));
 
-// Serve public static folder if it exists (allows local integrated testing)
+// Serve frontend static folder if it exists (allows local integrated testing)
+const frontendPath = path.join(__dirname, '..', 'frontend');
 const publicPath = path.join(__dirname, 'public');
-if (fs.existsSync(publicPath)) {
-  app.use(express.static(publicPath));
+const targetStaticPath = fs.existsSync(frontendPath) ? frontendPath : (fs.existsSync(publicPath) ? publicPath : null);
+
+if (targetStaticPath) {
+  app.use(express.static(targetStaticPath));
   
   // SPA routing fallback - serve index.html for non-API requests
   app.get(/^(?!\/api|\/uploads).*/, (req, res) => {
-    res.sendFile(path.join(publicPath, 'index.html'));
+    res.sendFile(path.join(targetStaticPath, 'index.html'));
   });
 }
+
+// Health Check Route
+app.get("/health", (req, res) => {
+res.status(200).json({
+success: true,
+message: "Server is healthy",
+timestamp: new Date().toISOString(),
+});
+});
 
 // Import routes
 const authRoutes = require('./routes/auth');
@@ -43,6 +55,7 @@ const announcementRoutes = require('./routes/announcements');
 const helpRoutes = require('./routes/help');
 const notificationRoutes = require('./routes/notifications');
 const sonicRoutes = require('./routes/sonic');
+const reviewRoutes = require('./routes/reviews');
 
 // Mount API routes
 app.use('/api/auth', authRoutes);
@@ -52,6 +65,7 @@ app.use('/api/announcements', announcementRoutes);
 app.use('/api/help', helpRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/sonic', sonicRoutes);
+app.use('/api/reviews', reviewRoutes);
 
 // Seed default data using Mongoose
 async function seedDefaultData() {
