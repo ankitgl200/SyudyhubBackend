@@ -253,6 +253,37 @@ const MessageTemplateSchema = new Schema({
 
 const MessageTemplate = mongoose.model('MessageTemplate', MessageTemplateSchema);
 
+// Review Schema
+const ReviewSchema = new Schema({
+  userId: {
+    type: Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+    unique: true
+  },
+  name: {
+    type: String,
+    required: true
+  },
+  rating: {
+    type: Number,
+    required: true,
+    min: 1,
+    max: 5
+  },
+  comment: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  }
+});
+
+const Review = mongoose.model('Review', ReviewSchema);
+
 module.exports = {
   User,
   Folder,
@@ -260,5 +291,6 @@ module.exports = {
   Announcement,
   HelpRequest,
   Notification,
-  MessageTemplate
+  MessageTemplate,
+  Review
 };
