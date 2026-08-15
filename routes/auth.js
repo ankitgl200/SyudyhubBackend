@@ -508,4 +508,41 @@ router.post('/users/:id/reset-password', isAdmin, async (req, res) => {
   }
 });
 
+// @route   GET api/auth/contributors
+// @desc    Get top 50 student contributors (public route)
+router.get('/contributors', async (req, res) => {
+  try {
+
+    const students = await User.find({ role: 'student' }).select('name phone createdAt');
+    const rankingList = [];
+
+    for (const s of students) {
+      const points = await Document.countDocuments({ uploadedByUserId: s._id, status: 'approved' });
+      if (points > 0) {
+        rankingList.push({
+          id: s._id,
+          name: s.name,
+          uploads: points,
+          points,
+          createdAt: s.createdAt
+        });
+      }
+    }
+
+    // Sort by points descending, then by name
+    rankingList.sort((a, b) => {
+      if (b.points !== a.points) {
+        return b.points - a.points;
+      }
+      return a.name.localeCompare(b.name);
+    });
+
+    const top50 = rankingList.slice(0, 50);
+    res.json(top50);
+  } catch (err) {
+    console.error('Contributors ranking error:', err);
+    res.status(500).json({ message: 'Server error loading contributors' });
+  }
+});
+
 module.exports = router;
