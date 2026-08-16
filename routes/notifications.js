@@ -160,10 +160,10 @@ router.post('/read/:id', auth, async (req, res) => {
 });
 
 // @route   GET api/notifications/all
-// @desc    Get all notifications (Superadmin only)
+// @desc    Get all notifications (Admin/Superadmin only)
 router.get('/all', auth, async (req, res) => {
-  if (req.user.role !== 'superadmin') {
-    return res.status(403).json({ message: 'Access denied: Superadmins only' });
+  if (req.user.role !== 'superadmin' && req.user.role !== 'admin') {
+    return res.status(403).json({ message: 'Access denied: Admins only' });
   }
   try {
     const notifications = await Notification.find()
@@ -188,10 +188,10 @@ router.get('/all', auth, async (req, res) => {
 });
 
 // @route   PUT api/notifications/:id
-// @desc    Edit an unseen notification (Superadmin only)
+// @desc    Edit an unseen notification (Admin/Superadmin only)
 router.put('/:id', auth, async (req, res) => {
-  if (req.user.role !== 'superadmin') {
-    return res.status(403).json({ message: 'Access denied: Superadmins only' });
+  if (req.user.role !== 'superadmin' && req.user.role !== 'admin') {
+    return res.status(403).json({ message: 'Access denied: Admins only' });
   }
   const { message: newRawMessage } = req.body;
   if (!newRawMessage) {
@@ -222,10 +222,10 @@ router.put('/:id', auth, async (req, res) => {
 });
 
 // @route   DELETE api/notifications/:id
-// @desc    Delete a notification (Superadmin only)
+// @desc    Delete a notification (Admin/Superadmin only)
 router.delete('/:id', auth, async (req, res) => {
-  if (req.user.role !== 'superadmin') {
-    return res.status(403).json({ message: 'Access denied: Superadmins only' });
+  if (req.user.role !== 'superadmin' && req.user.role !== 'admin') {
+    return res.status(403).json({ message: 'Access denied: Admins only' });
   }
   try {
     const deleted = await Notification.findByIdAndDelete(req.params.id);
