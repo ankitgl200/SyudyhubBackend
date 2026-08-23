@@ -81,6 +81,33 @@ function deleteLocalFile(filePath) {
   }
 }
 
+// @route   GET api/documents/public-stats
+// @desc    Get public stats of all resources (count of approved documents and average rating of reviews) (Public)
+router.get('/public-stats', async (req, res) => {
+  try {
+    const { Review } = require('../db/models');
+    
+    // Count of all approved documents
+    const totalCount = await Document.countDocuments({ status: { $ne: 'pending' } });
+    
+    // Calculate average review score
+    const reviews = await Review.find({});
+    let averageRating = 4.8; // Default fallback
+    if (reviews.length > 0) {
+      const sum = reviews.reduce((acc, r) => acc + r.rating, 0);
+      averageRating = Number((sum / reviews.length).toFixed(1));
+    }
+    
+    res.json({
+      totalResources: totalCount,
+      averageRating: averageRating
+    });
+  } catch (err) {
+    console.error('Error fetching public stats:', err);
+    res.status(500).json({ message: 'Server error fetching public stats' });
+  }
+});
+
 // @route   GET api/documents
 // @desc    Get documents, optional filters by type, folderId, subject, year (requires auth)
 router.get('/', auth, async (req, res) => {
