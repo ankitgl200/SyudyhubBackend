@@ -2,9 +2,19 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { User, Document, Notification } = require('../db/models');
+const crypto = require('crypto');
+const { User, Document, Notification, PasswordResetOtp } = require('../db/models');
 const config = require('../config');
 const { auth, isAdmin, isSuperAdmin } = require('../middleware/auth');
+
+function maskEmail(email) {
+  if (!email || !email.includes('@')) return email;
+  const [local, domain] = email.split('@');
+  if (local.length <= 2) {
+    return local[0] + '***@' + domain;
+  }
+  return local.slice(0, 2) + '***' + local.slice(-1) + '@' + domain;
+}
 
 function parseUserAgent(userAgent, ip = 'Unknown') {
   let browser = 'Unknown';
@@ -56,11 +66,16 @@ function parseUserAgent(userAgent, ip = 'Unknown') {
 // @route   POST api/auth/signup
 // @desc    Register user (instant approval for student, admin approval for educator/admin)
 router.post('/signup', async (req, res) => {
-  const { name, phone, password, role } = req.body;
+  const { name, phone, email, password, role } = req.body;
 
   // Simple validation
   if (!name || !phone || !password || !role) {
     return res.status(400).json({ message: 'Please enter all fields' });
+  }
+
+  // Proper email validation
+  if (!email || !/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(email.trim())) {
+    return res.status(400).json({ message: 'Please enter a valid email address' });
   }
 
   // Check if role is valid
@@ -69,10 +84,17 @@ router.post('/signup', async (req, res) => {
   }
 
   try {
-    // Check for existing user
+    // Check for existing phone
     const existingUser = await User.findOne({ phone });
     if (existingUser) {
       return res.status(400).json({ message: 'User with this phone number already exists' });
+    }
+
+    // Check for existing email
+    const normalizedEmail = email.trim().toLowerCase();
+    const existingEmail = await User.findOne({ email: normalizedEmail });
+    if (existingEmail) {
+      return res.status(400).json({ message: 'User with this email already exists' });
     }
 
     // Hash password
@@ -85,6 +107,7 @@ router.post('/signup', async (req, res) => {
     const newUser = new User({
       name,
       phone,
+      email: normalizedEmail,
       password: hashedPassword,
       role,
       approved
@@ -95,11 +118,11 @@ router.post('/signup', async (req, res) => {
     // Create welcome notification
     let welcomeMsg = '';
     if (role === 'student') {
-      welcomeMsg = `Welcome to StudyHub! 📚\nExplore notes, papers, and resources to boost your learning. Stay consistent and keep growing! 🚀\n\nThank you\nTeam Studyhub.`;
+      welcomeMsg = `Welcome to StudyHub! 📚\nExplore notes, papers, and resources to boost your learning. Stay consistent and keep growing! 🚀\n\n📌 Note: A PDF User Manual has been automatically downloaded to guide you through all of StudyHub's features. If the manual did not download automatically, you can download it manually at any time:\n👉 On PC: Click your name in the top-right corner to open the dropdown and click "Download Manual".\n👉 On Mobile: Go to the "Profile" tab, scroll down to the "Account" section, and tap "Download Manual".\n\nThank you\nTeam Studyhub.`;
     } else if (role === 'educator') {
-      welcomeMsg = `Dear Sir/Ma’am,\n\nWe warmly welcome you to our platform as an educator and sincerely thank you for joining us. Your presence and experience will greatly benefit our student community.\n\nWe kindly request you to upload any resources you have, such as notes, previous year questions, or lab manuals, which can help students in their learning journey.\n\nIn case you face any issues while using the platform or otherwise, please feel free to use the Help & Support page—we are always here to assist you.\n\nThank you once again for being a valuable part of our initiative.\n\nThank you\nTeam Studyhub`;
+      welcomeMsg = `Dear Sir/Ma’am,\n\nWe warmly welcome you to our platform as an educator and sincerely thank you for joining us. Your presence and experience will greatly benefit our student community.\n\nWe kindly request you to upload any resources you have, such as notes, previous year questions, or lab manuals, which can help students in their learning journey.\n\n📌 Note: A PDF User Manual has been automatically downloaded to guide you through all of StudyHub's features. If the manual did not download automatically, you can download it manually at any time:\n👉 On PC: Click your name in the top-right corner to open the dropdown and click "Download Manual".\n👉 On Mobile: Go to the "Profile" tab, scroll down to the "Account" section, and tap "Download Manual".\n\nIn case you face any issues while using the platform or otherwise, please feel free to use the Help & Support page—we are always here to assist you.\n\nThank you once again for being a valuable part of our initiative.\n\nThank you\nTeam Studyhub`;
     } else if (role === 'admin') {
-      welcomeMsg = `Welcome Admin! ⚙️\n\nYou have full control to manage content, users, and keep StudyHub running smoothly. Let’s build something impactful! 🚀\n\nThank you\nTeam Studyhub`;
+      welcomeMsg = `Welcome Admin! ⚙️\n\nYou have full control to manage content, users, and keep StudyHub running smoothly. Let’s build something impactful! 🚀\n\n📌 Note: A PDF User Manual has been automatically downloaded to guide you through all of StudyHub's features. If the manual did not download automatically, you can download it manually at any time:\n👉 On PC: Click your name in the top-right corner to open the dropdown and click "Download Manual".\n👉 On Mobile: Go to the "Profile" tab, scroll down to the "Account" section, and tap "Download Manual".\n\nThank you\nTeam Studyhub`;
     }
 
     if (welcomeMsg) {
@@ -126,10 +149,12 @@ router.post('/signup', async (req, res) => {
 
     res.status(201).json({
       token,
+      isNewUser: true,
       user: {
         id: newUser._id,
         name: newUser.name,
         phone: newUser.phone,
+        email: newUser.email,
         role: newUser.role,
         approved: newUser.approved
       }
@@ -179,6 +204,7 @@ router.post('/login', async (req, res) => {
     const userAgent = req.headers['user-agent'] || '';
     const clientIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || 'Unknown';
     
+    const isNewUser = !user.lastLogin;
     user.lastLogin = new Date();
     user.lastActive = new Date();
     user.deviceInfo = parseUserAgent(userAgent, clientIp);
@@ -187,10 +213,12 @@ router.post('/login', async (req, res) => {
 
     res.json({
       token,
+      isNewUser,
       user: {
         id: user._id,
         name: user.name,
         phone: user.phone,
+        email: user.email || null,
         role: user.role,
         approved: user.approved
       }
@@ -214,6 +242,7 @@ router.get('/me', auth, async (req, res) => {
       id: user._id,
       name: user.name,
       phone: user.phone,
+      email: user.email || null,
       role: user.role,
       approved: user.approved
     });
@@ -231,6 +260,7 @@ router.get('/pending', isAdmin, async (req, res) => {
       id: u._id,
       name: u.name,
       phone: u.phone,
+      email: u.email || null,
       role: u.role,
       approved: u.approved,
       createdAt: u.createdAt
@@ -298,6 +328,7 @@ router.get('/users', isAdmin, async (req, res) => {
         id: u._id,
         name: u.name,
         phone: u.phone,
+        email: u.email || null,
         role: u.role,
         approved: u.approved,
         points,
@@ -542,6 +573,345 @@ router.get('/contributors', async (req, res) => {
   } catch (err) {
     console.error('Contributors ranking error:', err);
     res.status(500).json({ message: 'Server error loading contributors' });
+  }
+});
+
+// @route   PUT api/auth/email
+// @desc    Update or link email address for logged-in user (requires auth)
+router.put('/email', auth, async (req, res) => {
+  const { email } = req.body;
+
+  if (!email || !/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(email.trim())) {
+    return res.status(400).json({ message: 'Please enter a valid email address' });
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+
+  try {
+    // Check if email already registered by another account
+    const existingUser = await User.findOne({
+      email: normalizedEmail,
+      _id: { $ne: req.user.id }
+    });
+
+    if (existingUser) {
+      return res.status(400).json({ message: 'This email is already registered with another account' });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    user.email = normalizedEmail;
+    await user.save();
+
+    res.json({
+      message: 'Email updated successfully!',
+      user: {
+        id: user._id,
+        name: user.name,
+        phone: user.phone,
+        email: user.email,
+        role: user.role,
+        approved: user.approved
+      }
+    });
+  } catch (err) {
+    console.error('Update email error:', err);
+    res.status(500).json({ message: 'Server error updating email' });
+  }
+});
+
+// @route   POST api/auth/forgot-password
+// @desc    Initiate password reset: checks phone, generates OTP for email or directs to support if no email
+router.post('/forgot-password', async (req, res) => {
+  const { phone } = req.body;
+
+  if (!phone) {
+    return res.status(400).json({ message: 'Please enter your phone number' });
+  }
+
+  try {
+    const cleanPhone = phone.trim();
+    const user = await User.findOne({ phone: cleanPhone });
+
+    if (!user) {
+      return res.status(404).json({ message: 'No account found with this phone number' });
+    }
+
+    // If user does not have a registered email
+    if (!user.email) {
+      return res.json({
+        hasEmail: false,
+        name: user.name,
+        phone: user.phone,
+        role: user.role
+      });
+    }
+
+    // Generate secure 6-digit cryptographic OTP
+    const otp = crypto.randomInt(100000, 999999).toString();
+    const otpHash = crypto.createHash('sha256').update(otp).digest('hex');
+
+    // Purge old OTPs for this phone
+    await PasswordResetOtp.deleteMany({ phone: user.phone });
+
+    // Save new OTP record (auto-purged by MongoDB TTL in 10 minutes)
+    await new PasswordResetOtp({
+      phone: user.phone,
+      otpHash
+    }).save();
+
+    res.json({
+      hasEmail: true,
+      name: user.name,
+      email: user.email,
+      maskedEmail: maskEmail(user.email),
+      otp: Number(otp)
+    });
+  } catch (err) {
+    console.error('Forgot password error:', err);
+    res.status(500).json({ message: 'Server error generating password reset OTP' });
+  }
+});
+
+// @route   POST api/auth/verify-reset-otp
+// @route   POST api/auth/verify-reset-otp
+// @desc    Verify OTP code and optionally reset password
+router.post('/verify-reset-otp', async (req, res) => {
+  const { phone, otp, newPassword, confirmPassword } = req.body;
+
+  if (!phone || !otp) {
+    return res.status(400).json({ message: 'Phone number and OTP code are required' });
+  }
+
+  try {
+    const cleanPhone = phone.trim();
+    const otpDoc = await PasswordResetOtp.findOne({ phone: cleanPhone }).sort({ createdAt: -1 });
+
+    if (!otpDoc) {
+      return res.status(400).json({ message: 'OTP has expired or is invalid. Please request a new OTP.' });
+    }
+
+    // Explicit 10-minute expiry check (600 seconds)
+    const OTP_EXPIRATION_MS = 10 * 60 * 1000;
+    if (Date.now() - new Date(otpDoc.createdAt).getTime() > OTP_EXPIRATION_MS) {
+      await PasswordResetOtp.deleteOne({ _id: otpDoc._id });
+      return res.status(400).json({ message: 'OTP has expired. Please request a new OTP.' });
+    }
+
+    if (otpDoc.attempts >= 5) {
+      await PasswordResetOtp.deleteOne({ _id: otpDoc._id });
+      return res.status(400).json({ message: 'Maximum attempts exceeded. Please request a new OTP.' });
+    }
+
+    const submittedHash = crypto.createHash('sha256').update(String(otp).trim()).digest('hex');
+
+    if (submittedHash !== otpDoc.otpHash) {
+      otpDoc.attempts += 1;
+      await otpDoc.save();
+      const remaining = 5 - otpDoc.attempts;
+      return res.status(400).json({
+        message: remaining > 0 
+          ? `Invalid OTP. ${remaining} attempt(s) remaining.` 
+          : 'Invalid OTP. Maximum attempts exceeded. Please request a new OTP.'
+      });
+    }
+
+    // Generate verified reset token
+    const jwt = require('jsonwebtoken');
+    const config = require('../config');
+    const resetToken = jwt.sign(
+      { phone: cleanPhone, purpose: 'password_reset' },
+      config.JWT_SECRET,
+      { expiresIn: '15m' }
+    );
+
+    // If newPassword is provided directly (one-step reset / backwards compatibility)
+    if (newPassword || confirmPassword) {
+      if (!newPassword || !confirmPassword) {
+        return res.status(400).json({ message: 'Please enter all password fields' });
+      }
+      if (newPassword !== confirmPassword) {
+        return res.status(400).json({ message: 'Passwords do not match' });
+      }
+      if (newPassword.length < 6) {
+        return res.status(400).json({ message: 'Password must be at least 6 characters long' });
+      }
+
+      const user = await User.findOne({ phone: cleanPhone });
+      if (!user) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+
+      const salt = await bcrypt.genSalt(10);
+      user.password = await bcrypt.hash(newPassword, salt);
+      await user.save();
+      await PasswordResetOtp.deleteMany({ phone: cleanPhone });
+
+      return res.json({ 
+        success: true, 
+        message: 'Password successfully reset! You can now log in with your new password.',
+        resetToken 
+      });
+    }
+
+    // Return verification success with resetToken for step 2
+    res.json({
+      success: true,
+      message: 'OTP verified successfully! Please enter your new password.',
+      resetToken,
+      phone: cleanPhone
+    });
+  } catch (err) {
+    console.error('Verify reset OTP error:', err);
+    res.status(500).json({ message: 'Server error verifying OTP' });
+  }
+});
+
+// @route   POST api/auth/reset-password-final
+// @desc    Update password after OTP has been verified
+router.post('/reset-password-final', async (req, res) => {
+  const { resetToken, phone, newPassword, confirmPassword } = req.body;
+
+  if (!newPassword || !confirmPassword) {
+    return res.status(400).json({ message: 'Please enter and confirm your new password' });
+  }
+
+  if (newPassword !== confirmPassword) {
+    return res.status(400).json({ message: 'Passwords do not match' });
+  }
+
+  if (newPassword.length < 6) {
+    return res.status(400).json({ message: 'Password must be at least 6 characters long' });
+  }
+
+  let targetPhone = phone ? phone.trim() : null;
+
+  if (resetToken) {
+    const jwt = require('jsonwebtoken');
+    const config = require('../config');
+    try {
+      const decoded = jwt.verify(resetToken, config.JWT_SECRET);
+      if (decoded.purpose !== 'password_reset') {
+        return res.status(400).json({ message: 'Invalid reset token purpose' });
+      }
+      targetPhone = decoded.phone;
+    } catch (tokenErr) {
+      return res.status(400).json({ message: 'Verification session has expired. Please verify OTP again.' });
+    }
+  }
+
+  if (!targetPhone) {
+    return res.status(400).json({ message: 'Unable to identify account. Please start password reset again.' });
+  }
+
+  try {
+    const cleanPhone = targetPhone.trim();
+    const user = await User.findOne({ phone: cleanPhone });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Hash new password
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(newPassword, salt);
+    await user.save();
+
+    // Invalidate any remaining OTPs
+    await PasswordResetOtp.deleteMany({ phone: cleanPhone });
+
+    res.json({ 
+      success: true, 
+      message: 'Password successfully updated! You can now log in with your new password.' 
+    });
+  } catch (err) {
+    console.error('Reset password final error:', err);
+    res.status(500).json({ message: 'Server error updating password' });
+  }
+});
+
+// @route   PUT api/auth/users/:id/email
+// @desc    Admin updates any user's email address by User ID
+router.put('/users/:id/email', isAdmin, async (req, res) => {
+  const { email } = req.body;
+
+  if (!email || !/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(email.trim())) {
+    return res.status(400).json({ message: 'Please enter a valid email address' });
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+
+  try {
+    const existing = await User.findOne({ email: normalizedEmail, _id: { $ne: req.params.id } });
+    if (existing) {
+      return res.status(400).json({ message: 'This email is already linked to another account' });
+    }
+
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    user.email = normalizedEmail;
+    await user.save();
+
+    res.json({
+      message: 'User email successfully updated by Admin!',
+      user: {
+        id: user._id,
+        name: user.name,
+        phone: user.phone,
+        email: user.email,
+        role: user.role
+      }
+    });
+  } catch (err) {
+    console.error('Admin update user email error:', err);
+    res.status(500).json({ message: 'Server error updating user email' });
+  }
+});
+
+// @route   PUT api/auth/users/by-phone/:phone/email
+// @desc    Admin updates any user's email address by phone number
+router.put('/users/by-phone/:phone/email', isAdmin, async (req, res) => {
+  const { email } = req.body;
+
+  if (!email || !/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(email.trim())) {
+    return res.status(400).json({ message: 'Please enter a valid email address' });
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+
+  try {
+    const cleanPhone = req.params.phone.trim();
+    const user = await User.findOne({ phone: cleanPhone });
+    if (!user) {
+      return res.status(404).json({ message: 'No user found with this phone number' });
+    }
+
+    const existing = await User.findOne({ email: normalizedEmail, _id: { $ne: user._id } });
+    if (existing) {
+      return res.status(400).json({ message: 'This email is already linked to another account' });
+    }
+
+    user.email = normalizedEmail;
+    await user.save();
+
+    res.json({
+      message: 'User email successfully updated by Admin!',
+      user: {
+        id: user._id,
+        name: user.name,
+        phone: user.phone,
+        email: user.email,
+        role: user.role
+      }
+    });
+  } catch (err) {
+    console.error('Admin update user email by phone error:', err);
+    res.status(500).json({ message: 'Server error updating user email' });
   }
 });
 
