@@ -14,6 +14,12 @@ const UserSchema = new Schema({
     unique: true,
     trim: true
   },
+  email: {
+    type: String,
+    trim: true,
+    lowercase: true,
+    default: null
+  },
   password: {
     type: String,
     required: true
@@ -189,6 +195,12 @@ const HelpRequestSchema = new Schema({
     required: true,
     trim: true
   },
+  requestedEmail: {
+    type: String,
+    default: null,
+    trim: true,
+    lowercase: true
+  },
   status: {
     type: String,
     enum: ['pending', 'resolved'],
@@ -284,6 +296,30 @@ const ReviewSchema = new Schema({
 
 const Review = mongoose.model('Review', ReviewSchema);
 
+// Password Reset OTP Schema
+const PasswordResetOtpSchema = new Schema({
+  phone: {
+    type: String,
+    required: true,
+    index: true
+  },
+  otpHash: {
+    type: String,
+    required: true
+  },
+  attempts: {
+    type: Number,
+    default: 0
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now,
+    expires: 600 // Automatically deletes document from MongoDB after 10 minutes (TTL index)
+  }
+});
+
+const PasswordResetOtp = mongoose.model('PasswordResetOtp', PasswordResetOtpSchema);
+
 module.exports = {
   User,
   Folder,
@@ -292,5 +328,6 @@ module.exports = {
   HelpRequest,
   Notification,
   MessageTemplate,
-  Review
+  Review,
+  PasswordResetOtp
 };
