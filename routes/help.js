@@ -6,7 +6,7 @@ const { auth, isAdmin } = require('../middleware/auth');
 // @route   POST api/help
 // @desc    Submit a help and support request (Teachers, Students, and Guests)
 router.post('/', async (req, res) => {
-  const { subject, message, name, phone, role } = req.body;
+  const { subject, message, name, phone, role, requestedEmail } = req.body;
 
   if (!subject || !message) {
     return res.status(400).json({ message: 'Subject and message are required' });
@@ -53,6 +53,7 @@ router.post('/', async (req, res) => {
       name: submitterName,
       phone: submitterPhone,
       role: submitterRole,
+      requestedEmail: requestedEmail ? requestedEmail.trim().toLowerCase() : null,
       subject,
       message
     });
@@ -65,6 +66,7 @@ router.post('/', async (req, res) => {
       name: newRequest.name,
       phone: newRequest.phone,
       role: newRequest.role,
+      requestedEmail: newRequest.requestedEmail || null,
       subject: newRequest.subject,
       message: newRequest.message,
       status: newRequest.status,
@@ -87,6 +89,7 @@ router.get('/my', auth, async (req, res) => {
       name: r.name,
       phone: r.phone,
       role: r.role,
+      requestedEmail: r.requestedEmail || null,
       subject: r.subject,
       message: r.message,
       status: r.status,
@@ -109,6 +112,7 @@ router.get('/', isAdmin, async (req, res) => {
       name: r.name,
       phone: r.phone,
       role: r.role,
+      requestedEmail: r.requestedEmail || null,
       subject: r.subject,
       message: r.message,
       status: r.status,
