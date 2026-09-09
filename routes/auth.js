@@ -3,18 +3,11 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-const { User, Document, Notification, PasswordResetOtp } = require('../db/models');
+const { User, Document, Notification, OtpVerification, PasswordResetOtp } = require('../db/models');
 const config = require('../config');
 const { auth, isAdmin, isSuperAdmin } = require('../middleware/auth');
-
-function maskEmail(email) {
-  if (!email || !email.includes('@')) return email;
-  const [local, domain] = email.split('@');
-  if (local.length <= 2) {
-    return local[0] + '***@' + domain;
-  }
-  return local.slice(0, 2) + '***' + local.slice(-1) + '@' + domain;
-}
+const { sendOtpEmail, maskEmail } = require('../services/emailService');
+const { otpRequestLimiter, otpVerifyLimiter } = require('../middleware/security');
 
 function parseUserAgent(userAgent, ip = 'Unknown') {
   let browser = 'Unknown';
@@ -623,26 +616,42 @@ router.put('/email', auth, async (req, res) => {
   }
 });
 
-// @route   POST api/auth/forgot-password
-// @desc    Initiate password reset: checks phone, generates OTP for email or directs to support if no email
-router.post('/forgot-password', async (req, res) => {
+// ============================================================================
+// SECURE SERVER-AUTHORITATIVE OTP & PASSWORD RESET ENDPOINTS
+// ============================================================================
+
+/**
+ * Handle OTP Request (Supports both /request-otp and legacy /forgot-password)
+ */
+async function handleRequestOtp(req, res) {
   const { phone } = req.body;
 
-  if (!phone) {
-    return res.status(400).json({ message: 'Please enter your phone number' });
+  if (!phone || typeof phone !== 'string' || !/^\d{10,15}$/.test(phone.trim())) {
+    return res.status(400).json({ message: 'Please enter a valid registered phone number' });
   }
 
   try {
     const cleanPhone = phone.trim();
     const user = await User.findOne({ phone: cleanPhone });
 
+    // Prevent Account Enumeration: Return generic response if account does not exist
     if (!user) {
-      return res.status(404).json({ message: 'No account found with this phone number' });
+      console.log(`[Security Audit] OTP request for non-existent phone number: ${cleanPhone.slice(-4)}`);
+      return res.json({
+        success: true,
+        hasEmail: true,
+        message: 'If an account is associated with this phone, a verification code has been dispatched.',
+        verificationId: crypto.randomUUID(),
+        maskedEmail: 'ac***t@domain.com',
+        expiresInSeconds: 300,
+        cooldownSeconds: 60
+      });
     }
 
-    // If user does not have a registered email
+    // Account without registered email -> Guide to Help & Support
     if (!user.email) {
       return res.json({
+        success: false,
         hasEmail: false,
         name: user.name,
         phone: user.phone,
@@ -650,85 +659,274 @@ router.post('/forgot-password', async (req, res) => {
       });
     }
 
-    // Generate secure 6-digit cryptographic OTP
-    const otp = crypto.randomInt(100000, 999999).toString();
-    const otpHash = crypto.createHash('sha256').update(otp).digest('hex');
-
-    // Purge old OTPs for this phone
-    await PasswordResetOtp.deleteMany({ phone: user.phone });
-
-    // Save new OTP record (auto-purged by MongoDB TTL in 10 minutes)
-    await new PasswordResetOtp({
-      phone: user.phone,
-      otpHash
-    }).save();
-
-    res.json({
-      hasEmail: true,
-      name: user.name,
-      email: user.email,
-      maskedEmail: maskEmail(user.email),
-      otp: Number(otp)
+    // Account-level rate limiting: Max 5 OTP requests per 15 minutes
+    const recentRequests = await OtpVerification.countDocuments({
+      userId: user._id,
+      createdAt: { $gte: new Date(Date.now() - 15 * 60 * 1000) }
     });
-  } catch (err) {
-    console.error('Forgot password error:', err);
-    res.status(500).json({ message: 'Server error generating password reset OTP' });
-  }
-});
 
-// @route   POST api/auth/verify-reset-otp
-// @route   POST api/auth/verify-reset-otp
-// @desc    Verify OTP code and optionally reset password
-router.post('/verify-reset-otp', async (req, res) => {
-  const { phone, otp, newPassword, confirmPassword } = req.body;
-
-  if (!phone || !otp) {
-    return res.status(400).json({ message: 'Phone number and OTP code are required' });
-  }
-
-  try {
-    const cleanPhone = phone.trim();
-    const otpDoc = await PasswordResetOtp.findOne({ phone: cleanPhone }).sort({ createdAt: -1 });
-
-    if (!otpDoc) {
-      return res.status(400).json({ message: 'OTP has expired or is invalid. Please request a new OTP.' });
-    }
-
-    // Explicit 10-minute expiry check (600 seconds)
-    const OTP_EXPIRATION_MS = 10 * 60 * 1000;
-    if (Date.now() - new Date(otpDoc.createdAt).getTime() > OTP_EXPIRATION_MS) {
-      await PasswordResetOtp.deleteOne({ _id: otpDoc._id });
-      return res.status(400).json({ message: 'OTP has expired. Please request a new OTP.' });
-    }
-
-    if (otpDoc.attempts >= 5) {
-      await PasswordResetOtp.deleteOne({ _id: otpDoc._id });
-      return res.status(400).json({ message: 'Maximum attempts exceeded. Please request a new OTP.' });
-    }
-
-    const submittedHash = crypto.createHash('sha256').update(String(otp).trim()).digest('hex');
-
-    if (submittedHash !== otpDoc.otpHash) {
-      otpDoc.attempts += 1;
-      await otpDoc.save();
-      const remaining = 5 - otpDoc.attempts;
-      return res.status(400).json({
-        message: remaining > 0 
-          ? `Invalid OTP. ${remaining} attempt(s) remaining.` 
-          : 'Invalid OTP. Maximum attempts exceeded. Please request a new OTP.'
+    if (recentRequests >= 5) {
+      console.warn(`[Security Alert] Account OTP rate limit exceeded for user ${user._id}`);
+      return res.status(429).json({
+        success: false,
+        message: 'Too many verification code requests for this account. Please try again after 15 minutes.'
       });
     }
 
-    // Generate verified reset token
-    const jwt = require('jsonwebtoken');
-    const config = require('../config');
-    const resetToken = jwt.sign(
-      { phone: cleanPhone, purpose: 'password_reset' },
-      config.JWT_SECRET,
-      { expiresIn: '15m' }
+    // Invalidate/Revoke any existing pending OTP sessions for this user
+    await OtpVerification.updateMany(
+      { userId: user._id, used: false, revoked: false },
+      { $set: { revoked: true } }
     );
 
-    // If newPassword is provided directly (one-step reset / backwards compatibility)
+    // Cryptographically secure 6-digit numeric OTP
+    const rawOtp = crypto.randomInt(100000, 1000000).toString();
+
+    // Hash the OTP with HMAC-SHA256 using server secret
+    const otpHash = crypto.createHmac('sha256', config.JWT_SECRET).update(rawOtp).digest('hex');
+
+    // Generate unique verification transaction ID
+    const verificationId = crypto.randomUUID();
+
+    const clientIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || 'Unknown';
+    const userAgent = req.headers['user-agent'] || 'Unknown';
+
+    // Store verification transaction in database
+    const verification = new OtpVerification({
+      verificationId,
+      userId: user._id,
+      phone: user.phone,
+      email: user.email,
+      purpose: 'password_reset',
+      otpHash,
+      attempts: 0,
+      maxAttempts: config.SECURITY.OTP_MAX_ATTEMPTS,
+      used: false,
+      revoked: false,
+      expiresAt: new Date(Date.now() + config.SECURITY.OTP_LIFETIME_MS),
+      lastSentAt: new Date(),
+      resendCount: 0,
+      maxResends: config.SECURITY.MAX_RESENDS,
+      clientIp,
+      userAgent
+    });
+
+    await verification.save();
+
+    // Dispatch email from server (Plaintext OTP is NEVER returned in HTTP response)
+    try {
+      await sendOtpEmail({
+        email: user.email,
+        name: user.name,
+        otp: rawOtp,
+        purpose: 'password_reset'
+      });
+    } catch (mailErr) {
+      console.error('[Email Dispatch Error]', mailErr.message);
+      // Invalidate the record if dispatch failed
+      await OtpVerification.deleteOne({ _id: verification._id });
+      return res.status(502).json({
+        success: false,
+        message: 'Unable to deliver verification email at this time. Please try again later.'
+      });
+    }
+
+    // Return safe generic response (NO OTP in JSON)
+    res.json({
+      success: true,
+      hasEmail: true,
+      message: 'A verification code has been dispatched to your registered email address.',
+      verificationId,
+      maskedEmail: maskEmail(user.email),
+      expiresInSeconds: Math.floor(config.SECURITY.OTP_LIFETIME_MS / 1000),
+      cooldownSeconds: config.SECURITY.RESEND_COOLDOWN_SEC
+    });
+  } catch (err) {
+    console.error('Request OTP error:', err);
+    res.status(500).json({ success: false, message: 'Server error processing verification request' });
+  }
+}
+
+/**
+ * Handle Resend OTP
+ */
+async function handleResendOtp(req, res) {
+  const { verificationId } = req.body;
+
+  if (!verificationId || typeof verificationId !== 'string') {
+    return res.status(400).json({ message: 'Verification session ID is required' });
+  }
+
+  try {
+    const verification = await OtpVerification.findOne({
+      verificationId: verificationId.trim(),
+      used: false,
+      revoked: false
+    });
+
+    if (!verification) {
+      return res.status(400).json({
+        message: 'Verification session has expired or is invalid. Please request a new code.'
+      });
+    }
+
+    // Check expiration
+    if (Date.now() > new Date(verification.expiresAt).getTime()) {
+      verification.revoked = true;
+      await verification.save();
+      return res.status(400).json({
+        message: 'Verification session has expired. Please request a new code.'
+      });
+    }
+
+    // Check cooldown
+    const elapsedSec = (Date.now() - new Date(verification.lastSentAt).getTime()) / 1000;
+    if (elapsedSec < config.SECURITY.RESEND_COOLDOWN_SEC) {
+      const waitSec = Math.ceil(config.SECURITY.RESEND_COOLDOWN_SEC - elapsedSec);
+      return res.status(429).json({
+        message: `Please wait ${waitSec}s before requesting another code.`,
+        cooldownSeconds: waitSec,
+        cooldownRemaining: waitSec
+      });
+    }
+
+    // Check resend count limit
+    if (verification.resendCount >= verification.maxResends) {
+      verification.revoked = true;
+      await verification.save();
+      return res.status(429).json({
+        message: 'Maximum resend limit reached for this session. Please start over.'
+      });
+    }
+
+    // Generate new OTP
+    const rawOtp = crypto.randomInt(100000, 1000000).toString();
+    const otpHash = crypto.createHmac('sha256', config.JWT_SECRET).update(rawOtp).digest('hex');
+
+    verification.otpHash = otpHash;
+    verification.attempts = 0; // Reset attempts on fresh OTP
+    verification.resendCount += 1;
+    verification.lastSentAt = new Date();
+    verification.expiresAt = new Date(Date.now() + config.SECURITY.OTP_LIFETIME_MS);
+    await verification.save();
+
+    // Fetch user for name
+    const user = await User.findById(verification.userId);
+    const recipientName = user ? user.name : 'Student';
+
+    // Dispatch fresh email from server
+    await sendOtpEmail({
+      email: verification.email,
+      name: recipientName,
+      otp: rawOtp,
+      purpose: 'password_reset'
+    });
+
+    res.json({
+      success: true,
+      message: 'A new verification code has been dispatched to your email.',
+      cooldownSeconds: config.SECURITY.RESEND_COOLDOWN_SEC
+    });
+  } catch (err) {
+    console.error('Resend OTP error:', err);
+    res.status(500).json({ message: 'Server error resending verification code' });
+  }
+}
+
+/**
+ * Handle OTP Verification (Supports both /verify-otp and legacy /verify-reset-otp)
+ */
+async function handleVerifyOtp(req, res) {
+  const { verificationId, otp, phone, newPassword, confirmPassword } = req.body;
+
+  if (!otp || !/^\d{6}$/.test(String(otp).trim())) {
+    return res.status(400).json({ message: 'Please enter a valid 6-digit verification code' });
+  }
+
+  try {
+    let doc = null;
+
+    if (verificationId && typeof verificationId === 'string') {
+      doc = await OtpVerification.findOne({ verificationId: verificationId.trim() });
+    } else if (phone && typeof phone === 'string') {
+      // Legacy fallback: locate latest active session by phone
+      doc = await OtpVerification.findOne({
+        phone: phone.trim(),
+        used: false,
+        revoked: false
+      }).sort({ createdAt: -1 });
+    }
+
+    if (!doc || doc.revoked) {
+      return res.status(400).json({ message: 'Verification session has expired or is invalid. Please request a new code.' });
+    }
+
+    if (doc.used) {
+      return res.status(400).json({ message: 'This verification code has already been used. Please request a new code.' });
+    }
+
+    // Expiration check
+    if (Date.now() > new Date(doc.expiresAt).getTime()) {
+      doc.revoked = true;
+      await doc.save();
+      return res.status(400).json({ message: 'Verification code has expired. Please request a new code.' });
+    }
+
+    // Brute-force limit check
+    if (doc.attempts >= doc.maxAttempts) {
+      doc.revoked = true;
+      await doc.save();
+      return res.status(400).json({ message: 'Maximum verification attempts exceeded. Verification session locked.' });
+    }
+
+    // Constant-time HMAC comparison
+    const submittedHash = crypto.createHmac('sha256', config.JWT_SECRET).update(String(otp).trim()).digest('hex');
+    const expectedBuf = Buffer.from(doc.otpHash, 'hex');
+    const actualBuf = Buffer.from(submittedHash, 'hex');
+
+    const isMatch = expectedBuf.length === actualBuf.length && crypto.timingSafeEqual(expectedBuf, actualBuf);
+
+    if (!isMatch) {
+      doc.attempts += 1;
+      if (doc.attempts >= doc.maxAttempts) {
+        doc.revoked = true;
+      }
+      await doc.save();
+
+      const remaining = doc.maxAttempts - doc.attempts;
+      return res.status(400).json({
+        success: false,
+        message: remaining > 0
+          ? `Invalid code. ${remaining} attempt(s) remaining.`
+          : 'Maximum attempts exceeded. Verification session locked.'
+      });
+    }
+
+    // Atomic single-use state transition to prevent race conditions
+    const consumed = await OtpVerification.findOneAndUpdate(
+      { _id: doc._id, used: false, revoked: false },
+      { $set: { used: true } },
+      { new: true }
+    );
+
+    if (!consumed) {
+      return res.status(409).json({ success: false, message: 'Verification code already consumed.' });
+    }
+
+    // Issue short-lived, signed JWT resetToken
+    const resetToken = jwt.sign(
+      {
+        userId: String(consumed.userId),
+        phone: consumed.phone,
+        email: consumed.email,
+        purpose: 'password_reset',
+        verificationId: consumed.verificationId
+      },
+      config.JWT_SECRET,
+      { expiresIn: '10m' }
+    );
+
+    // If newPassword provided directly (one-step backwards compatibility)
     if (newPassword || confirmPassword) {
       if (!newPassword || !confirmPassword) {
         return res.status(400).json({ message: 'Please enter all password fields' });
@@ -740,7 +938,7 @@ router.post('/verify-reset-otp', async (req, res) => {
         return res.status(400).json({ message: 'Password must be at least 6 characters long' });
       }
 
-      const user = await User.findOne({ phone: cleanPhone });
+      const user = await User.findById(consumed.userId);
       if (!user) {
         return res.status(404).json({ message: 'User not found' });
       }
@@ -748,32 +946,35 @@ router.post('/verify-reset-otp', async (req, res) => {
       const salt = await bcrypt.genSalt(10);
       user.password = await bcrypt.hash(newPassword, salt);
       await user.save();
-      await PasswordResetOtp.deleteMany({ phone: cleanPhone });
 
-      return res.json({ 
-        success: true, 
+      // Revoke all OTPs for this user
+      await OtpVerification.updateMany({ userId: user._id }, { $set: { revoked: true, used: true } });
+
+      return res.json({
+        success: true,
         message: 'Password successfully reset! You can now log in with your new password.',
-        resetToken 
+        resetToken
       });
     }
 
-    // Return verification success with resetToken for step 2
+    // Step 2 success: return resetToken for Step 3
     res.json({
       success: true,
-      message: 'OTP verified successfully! Please enter your new password.',
+      message: 'Verification code verified successfully! Please set your new password.',
       resetToken,
-      phone: cleanPhone
+      phone: consumed.phone
     });
   } catch (err) {
-    console.error('Verify reset OTP error:', err);
-    res.status(500).json({ message: 'Server error verifying OTP' });
+    console.error('Verify OTP error:', err);
+    res.status(500).json({ message: 'Server error verifying code' });
   }
-});
+}
 
-// @route   POST api/auth/reset-password-final
-// @desc    Update password after OTP has been verified
-router.post('/reset-password-final', async (req, res) => {
-  const { resetToken, phone, newPassword, confirmPassword } = req.body;
+/**
+ * Handle Final Password Reset
+ */
+async function handleResetPasswordFinal(req, res) {
+  const { resetToken, newPassword, confirmPassword } = req.body;
 
   if (!newPassword || !confirmPassword) {
     return res.status(400).json({ message: 'Please enter and confirm your new password' });
@@ -787,50 +988,66 @@ router.post('/reset-password-final', async (req, res) => {
     return res.status(400).json({ message: 'Password must be at least 6 characters long' });
   }
 
-  let targetPhone = phone ? phone.trim() : null;
-
-  if (resetToken) {
-    const jwt = require('jsonwebtoken');
-    const config = require('../config');
-    try {
-      const decoded = jwt.verify(resetToken, config.JWT_SECRET);
-      if (decoded.purpose !== 'password_reset') {
-        return res.status(400).json({ message: 'Invalid reset token purpose' });
-      }
-      targetPhone = decoded.phone;
-    } catch (tokenErr) {
-      return res.status(400).json({ message: 'Verification session has expired. Please verify OTP again.' });
-    }
-  }
-
-  if (!targetPhone) {
-    return res.status(400).json({ message: 'Unable to identify account. Please start password reset again.' });
+  if (!resetToken || typeof resetToken !== 'string') {
+    return res.status(401).json({ message: 'Verification session has expired. Please verify code again.' });
   }
 
   try {
-    const cleanPhone = targetPhone.trim();
-    const user = await User.findOne({ phone: cleanPhone });
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
+    const decoded = jwt.verify(resetToken, config.JWT_SECRET);
+    if (decoded.purpose !== 'password_reset' || !decoded.userId) {
+      return res.status(400).json({ message: 'Invalid reset token purpose' });
     }
 
-    // Hash new password
+    // Verify session has not already been used or revoked (replay attack prevention)
+    if (decoded.verificationId) {
+      const verifSession = await OtpVerification.findOne({
+        verificationId: decoded.verificationId,
+        revoked: false
+      });
+
+      if (!verifSession) {
+        return res.status(401).json({
+          message: 'Reset token has already been used or revoked. Please verify again.'
+        });
+      }
+
+      verifSession.revoked = true;
+      await verifSession.save();
+    }
+
+    // Retrieve user by ID derived from verified JWT (NEVER trust client phone/email parameters)
+    const user = await User.findById(decoded.userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User account not found' });
+    }
+
+    // Hash and update password
     const salt = await bcrypt.genSalt(10);
     user.password = await bcrypt.hash(newPassword, salt);
     await user.save();
 
-    // Invalidate any remaining OTPs
-    await PasswordResetOtp.deleteMany({ phone: cleanPhone });
+    // Revoke all remaining OTPs for this user
+    await OtpVerification.updateMany({ userId: user._id }, { $set: { revoked: true, used: true } });
 
-    res.json({ 
-      success: true, 
-      message: 'Password successfully updated! You can now log in with your new password.' 
+    console.log(`[Security Audit] Password successfully changed for user ${user._id} via verified reset session.`);
+
+    res.json({
+      success: true,
+      message: 'Password successfully updated! You can now log in with your new password.'
     });
-  } catch (err) {
-    console.error('Reset password final error:', err);
-    res.status(500).json({ message: 'Server error updating password' });
+  } catch (tokenErr) {
+    console.warn(`[Security Alert] Invalid or expired resetToken submitted: ${tokenErr.message}`);
+    return res.status(401).json({ message: 'Verification session has expired. Please verify code again.' });
   }
-});
+}
+
+// Mount OTP routes
+router.post('/request-otp', otpRequestLimiter, handleRequestOtp);
+router.post('/forgot-password', otpRequestLimiter, handleRequestOtp); // Alias for backwards compatibility
+router.post('/resend-otp', otpRequestLimiter, handleResendOtp);
+router.post('/verify-otp', otpVerifyLimiter, handleVerifyOtp);
+router.post('/verify-reset-otp', otpVerifyLimiter, handleVerifyOtp); // Alias for backwards compatibility
+router.post('/reset-password-final', handleResetPasswordFinal);
 
 // @route   PUT api/auth/users/:id/email
 // @desc    Admin updates any user's email address by User ID
