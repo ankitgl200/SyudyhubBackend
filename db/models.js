@@ -296,12 +296,36 @@ const ReviewSchema = new Schema({
 
 const Review = mongoose.model('Review', ReviewSchema);
 
-// Password Reset OTP Schema
-const PasswordResetOtpSchema = new Schema({
+// Server-Authoritative OTP Verification Schema
+const OtpVerificationSchema = new Schema({
+  verificationId: {
+    type: String,
+    required: true,
+    unique: true,
+    index: true
+  },
+  userId: {
+    type: Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+    index: true
+  },
   phone: {
     type: String,
     required: true,
     index: true
+  },
+  email: {
+    type: String,
+    required: true,
+    trim: true,
+    lowercase: true
+  },
+  purpose: {
+    type: String,
+    enum: ['password_reset', 'email_verification', 'phone_verification'],
+    default: 'password_reset',
+    required: true
   },
   otpHash: {
     type: String,
@@ -311,14 +335,53 @@ const PasswordResetOtpSchema = new Schema({
     type: Number,
     default: 0
   },
+  maxAttempts: {
+    type: Number,
+    default: 5
+  },
+  used: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  revoked: {
+    type: Boolean,
+    default: false
+  },
+  expiresAt: {
+    type: Date,
+    required: true,
+    index: true
+  },
+  lastSentAt: {
+    type: Date,
+    default: Date.now
+  },
+  resendCount: {
+    type: Number,
+    default: 0
+  },
+  maxResends: {
+    type: Number,
+    default: 3
+  },
+  clientIp: {
+    type: String,
+    default: 'Unknown'
+  },
+  userAgent: {
+    type: String,
+    default: 'Unknown'
+  },
   createdAt: {
     type: Date,
     default: Date.now,
-    expires: 600 // Automatically deletes document from MongoDB after 10 minutes (TTL index)
+    expires: 900 // MongoDB TTL 15 minutes to purge completed/expired sessions
   }
 });
 
-const PasswordResetOtp = mongoose.model('PasswordResetOtp', PasswordResetOtpSchema);
+const OtpVerification = mongoose.model('OtpVerification', OtpVerificationSchema);
+const PasswordResetOtp = OtpVerification; // Backward-compatible alias
 
 module.exports = {
   User,
@@ -329,5 +392,6 @@ module.exports = {
   Notification,
   MessageTemplate,
   Review,
+  OtpVerification,
   PasswordResetOtp
 };
