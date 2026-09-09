@@ -5,15 +5,17 @@ const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
 const config = require('./config');
+const { securityHeaders, strictCors } = require('./middleware/security');
 
 const app = express();
 
-// Enable CORS
-app.use(cors());
+// Apply Security Headers & Strict CORS
+app.use(securityHeaders);
+app.use(strictCors);
 
-// Body parser
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Body parser with size limits
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 // Ensure public/uploads directory exists
 const UPLOADS_DIR = config.UPLOADS_DIR;
@@ -31,11 +33,6 @@ const targetStaticPath = fs.existsSync(frontendPath) ? frontendPath : (fs.exists
 
 if (targetStaticPath) {
   app.use(express.static(targetStaticPath));
-  
-  // SPA routing fallback - serve index.html for non-API requests
-  app.get(/^(?!\/api|\/uploads).*/, (req, res) => {
-    res.sendFile(path.join(targetStaticPath, 'index.html'));
-  });
 }
 
 // Health Check Route
@@ -54,7 +51,6 @@ const documentRoutes = require('./routes/documents');
 const announcementRoutes = require('./routes/announcements');
 const helpRoutes = require('./routes/help');
 const notificationRoutes = require('./routes/notifications');
-const sonicRoutes = require('./routes/sonic');
 const reviewRoutes = require('./routes/reviews');
 
 // Mount API routes
@@ -64,7 +60,6 @@ app.use('/api/documents', documentRoutes);
 app.use('/api/announcements', announcementRoutes);
 app.use('/api/help', helpRoutes);
 app.use('/api/notifications', notificationRoutes);
-app.use('/api/sonic', sonicRoutes);
 app.use('/api/reviews', reviewRoutes);
 
 // Seed default data using Mongoose
@@ -174,6 +169,13 @@ async function seedDefaultData() {
   } catch (err) {
     console.error('Error during data seeding:', err.message);
   }
+}
+
+// SPA routing fallback - serve index.html for non-API requests
+if (targetStaticPath) {
+  app.get(/^(?!\/api|\/uploads).*/, (req, res) => {
+    res.sendFile(path.join(targetStaticPath, 'index.html'));
+  });
 }
 
 // Global error handler
