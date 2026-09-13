@@ -137,16 +137,20 @@ async function seedDefaultData() {
       console.log('Seeded default Book folders');
     }
 
-    // Roadmap folders
-    const roadmapFoldersCount = await Folder.countDocuments({ type: 'roadmaps' });
-    if (roadmapFoldersCount === 0) {
-      const defaultRoadmaps = [
-        'Computer Science Roadmap',
-        'Information Technology Roadmap',
-        'Electronics & Communication Roadmap'
+    // Simulation folders (and migrate legacy roadmap entries)
+    const { Document } = require('./db/models');
+    await Folder.updateMany({ type: 'roadmaps' }, { $set: { type: 'simulations' } });
+    await Document.updateMany({ type: 'roadmap' }, { $set: { type: 'simulation' } });
+
+    const simulationFoldersCount = await Folder.countDocuments({ type: { $in: ['simulations', 'roadmaps'] } });
+    if (simulationFoldersCount === 0) {
+      const defaultSimulations = [
+        'Computer Science Simulations',
+        'Electronics & Circuit Simulations',
+        'Mechanical & Physics Simulations'
       ];
-      await Folder.insertMany(defaultRoadmaps.map(name => ({ name, type: 'roadmaps', parentId: null })));
-      console.log('Seeded default Roadmap folders');
+      await Folder.insertMany(defaultSimulations.map(name => ({ name, type: 'simulations', parentId: null })));
+      console.log('Seeded default Simulation folders');
     }
 
     // 4. Seed default message templates
