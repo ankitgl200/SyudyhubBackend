@@ -532,10 +532,11 @@ router.post('/contribute', auth, (req, res) => {
       return res.status(400).json({ message: 'Title and document type are required' });
     }
 
-    // Validate type: notes, paper, lab_manual (not for books and roadmaps)
-    if (!['notes', 'paper', 'lab_manual'].includes(type)) {
+    // Validate type: allow all document types across all sections and folders
+    const allowedTypes = ['notes', 'paper', 'lab_manual', 'book', 'syllabus', 'roadmap', 'simulation', 'competitive'];
+    if (!allowedTypes.includes(type)) {
       if (req.file) deleteLocalFile(req.file.path);
-      return res.status(400).json({ message: 'Invalid document type for contribution. Only notes, papers, and lab manuals are allowed.' });
+      return res.status(400).json({ message: 'Invalid document type for contribution.' });
     }
 
     try {
@@ -567,7 +568,7 @@ router.post('/contribute', auth, (req, res) => {
       const newDoc = new Document({
         title,
         type,
-        folderId: folderId && folderId !== 'null' ? folderId : null,
+        folderId: (folderId && folderId !== 'null' && folderId !== 'general' && folderId !== 'undefined') ? folderId : null,
         subject: subject || null,
         year: year || null,
         fileUrl,
