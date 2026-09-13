@@ -49,7 +49,7 @@ router.post('/', auth, async (req, res) => {
   }
 
   // Dynamic authorization check
-  if (type === 'roadmaps') {
+  if (type === 'roadmaps' || type === 'simulations') {
     if (req.user.role !== 'admin' && req.user.role !== 'superadmin' && req.user.role !== 'educator') {
       return res.status(403).json({ message: 'Access denied: Teacher or Admin privileges required' });
     }
@@ -96,7 +96,7 @@ router.put('/:id', auth, async (req, res) => {
     }
 
     // Dynamic authorization check
-    if (folder.type === 'roadmaps') {
+    if (folder.type === 'roadmaps' || folder.type === 'simulations') {
       if (req.user.role !== 'admin' && req.user.role !== 'superadmin' && req.user.role !== 'educator') {
         return res.status(403).json({ message: 'Access denied: Teacher or Admin privileges required' });
       }
@@ -133,7 +133,7 @@ router.delete('/:id', auth, async (req, res) => {
     }
 
     // Dynamic authorization check
-    if (folder.type === 'roadmaps') {
+    if (folder.type === 'roadmaps' || folder.type === 'simulations') {
       if (req.user.role !== 'admin' && req.user.role !== 'superadmin' && req.user.role !== 'educator') {
         return res.status(403).json({ message: 'Access denied: Teacher or Admin privileges required' });
       }
