@@ -20,7 +20,13 @@ router.get('/', auth, async (req, res) => {
   const { type, parentId } = req.query;
   const query = {};
   
-  if (type) query.type = type;
+  if (type) {
+    if (type === 'simulations' || type === 'roadmaps') {
+      query.type = { $in: ['simulations', 'roadmaps'] };
+    } else {
+      query.type = type;
+    }
+  }
   if (parentId !== undefined) {
     query.parentId = parentId === 'null' ? null : parentId;
   }
