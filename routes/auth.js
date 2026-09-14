@@ -399,8 +399,8 @@ router.post('/promote/:id', isSuperAdmin, async (req, res) => {
 });
 
 // @route   GET api/auth/teachers/ranking
-// @desc    Get all enrolled teachers with ranks and points (requires auth)
-router.get('/teachers/ranking', auth, async (req, res) => {
+// @desc    Get all enrolled teachers with ranks and points (publicly viewable on homepage)
+router.get('/teachers/ranking', async (req, res) => {
   try {
     const teachers = await User.find({ role: 'educator', approved: true }).select('name phone createdAt');
     const rankingList = [];
