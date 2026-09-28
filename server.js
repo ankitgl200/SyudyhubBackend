@@ -52,6 +52,7 @@ const announcementRoutes = require('./routes/announcements');
 const helpRoutes = require('./routes/help');
 const notificationRoutes = require('./routes/notifications');
 const reviewRoutes = require('./routes/reviews');
+const teamRoutes = require('./routes/team');
 
 // Mount API routes
 app.use('/api/auth', authRoutes);
@@ -61,6 +62,7 @@ app.use('/api/announcements', announcementRoutes);
 app.use('/api/help', helpRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/reviews', reviewRoutes);
+app.use('/api/team', teamRoutes);
 
 // Seed default data using Mongoose
 async function seedDefaultData() {
@@ -203,3 +205,4 @@ mongoose.connect(config.MONGODB_URI)
     console.error('Database connection failed:', err.message);
     process.exit(1);
   });
+
