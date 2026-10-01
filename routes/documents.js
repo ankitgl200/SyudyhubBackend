@@ -357,25 +357,44 @@ router.get('/download/:id', auth, async (req, res) => {
     const fileName = doc.fileName || 'document.pdf';
 
     if (fileUrl.startsWith('http://') || fileUrl.startsWith('https://')) {
-      // Cloudinary URL or external URL
-      // Stream the file to avoid memory crashes and bypass bot blocks
       const fetchOptions = {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'application/pdf,application/octet-stream,*/*'
+        },
+        redirect: 'follow'
       };
       
-      const response = await fetch(fileUrl, fetchOptions);
+      let response;
+      try {
+        response = await fetch(fileUrl, fetchOptions);
+      } catch (fetchErr) {
+        return res.status(500).json({ message: 'Server failed to connect to external PDF link: ' + fetchErr.message });
+      }
+
       if (!response.ok) {
-        return res.status(500).json({ message: 'Failed to retrieve file from storage provider. Response: ' + response.status });
+        return res.status(500).json({ message: 'External site blocked access. HTTP Status: ' + response.status });
       }
       
       res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
       res.setHeader('Content-Type', response.headers.get('content-type') || 'application/pdf');
       
-      // Use pipeline to stream the data directly to the client without buffering in RAM
-      const { Readable } = require('stream');
-      return Readable.fromWeb(response.body).pipe(res);
+      try {
+        if (response.body && typeof response.body.pipe === 'function') {
+          // Used by node-fetch (if polyfilled)
+          return response.body.pipe(res);
+        } else if (response.body) {
+          // Native Node.js 18+ fetch WebStream
+          const { Readable } = require('stream');
+          return Readable.fromWeb(response.body).pipe(res);
+        } else {
+          // Fallback if no body stream
+          const arrayBuffer = await response.arrayBuffer();
+          return res.send(Buffer.from(arrayBuffer));
+        }
+      } catch (streamErr) {
+        return res.status(500).json({ message: 'Stream error: ' + streamErr.message });
+      }
     } else {
       // Local file
       const filePath = path.join(UPLOADS_DIR, fileUrl.replace('/uploads/', ''));
