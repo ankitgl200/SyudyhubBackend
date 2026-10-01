@@ -358,17 +358,24 @@ router.get('/download/:id', auth, async (req, res) => {
 
     if (fileUrl.startsWith('http://') || fileUrl.startsWith('https://')) {
       // Cloudinary URL or external URL
-      // Stream the file to force direct download
-      const response = await fetch(fileUrl);
+      // Stream the file to avoid memory crashes and bypass bot blocks
+      const fetchOptions = {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+      };
+      
+      const response = await fetch(fileUrl, fetchOptions);
       if (!response.ok) {
-        return res.status(500).json({ message: 'Failed to retrieve file from storage provider' });
+        return res.status(500).json({ message: 'Failed to retrieve file from storage provider. Response: ' + response.status });
       }
       
       res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
       res.setHeader('Content-Type', response.headers.get('content-type') || 'application/pdf');
       
-      const arrayBuffer = await response.arrayBuffer();
-      return res.send(Buffer.from(arrayBuffer));
+      // Use pipeline to stream the data directly to the client without buffering in RAM
+      const { Readable } = require('stream');
+      return Readable.fromWeb(response.body).pipe(res);
     } else {
       // Local file
       const filePath = path.join(UPLOADS_DIR, fileUrl.replace('/uploads/', ''));
