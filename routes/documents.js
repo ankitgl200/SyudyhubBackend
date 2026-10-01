@@ -364,7 +364,7 @@ router.get('/download/:id', auth, async (req, res) => {
         return res.status(500).json({ message: 'Failed to retrieve file from storage provider' });
       }
       
-      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
       res.setHeader('Content-Type', response.headers.get('content-type') || 'application/pdf');
       
       const arrayBuffer = await response.arrayBuffer();
@@ -375,7 +375,7 @@ router.get('/download/:id', auth, async (req, res) => {
       if (!fs.existsSync(filePath)) {
         return res.status(404).json({ message: 'File not found on local disk' });
       }
-      return res.download(filePath, fileName);
+      return res.sendFile(filePath, { headers: { 'Content-Disposition': `inline; filename="${fileName}"` } });
     }
   } catch (err) {
     console.error('Download error:', err);
