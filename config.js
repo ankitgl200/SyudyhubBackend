@@ -25,6 +25,10 @@ module.exports = {
     MAX_RESENDS: parseInt(process.env.MAX_RESENDS, 10) || 3,
     ALLOWED_ORIGINS: [
       'https://studyhub4students.vercel.app',
+      'https://studymyte.tech',
+      'https://www.studymyte.tech',
+      'http://studymyte.tech',
+      'http://www.studymyte.tech',
       'http://localhost:5000',
       'http://localhost:3000',
       'http://127.0.0.1:5000',
