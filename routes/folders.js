@@ -86,6 +86,38 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
+// @route   PUT api/folders/:id/move
+// @desc    Move/shift folder to a different parent (Admin/Teacher)
+router.put('/:id/move', auth, async (req, res) => {
+  const { parentId } = req.body;
+  try {
+    const folder = await Folder.findById(req.params.id);
+    if (!folder) return res.status(404).json({ message: 'Folder not found' });
+    if (folder.type === 'roadmaps' || folder.type === 'simulations') {
+      if (req.user.role !== 'admin' && req.user.role !== 'superadmin' && req.user.role !== 'educator') {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+    } else {
+      if (req.user.role !== 'admin' && req.user.role !== 'superadmin') return res.status(403).json({ message: 'Access denied' });
+    }
+    
+    // Prevent moving a folder into itself or its descendants
+    if (parentId && parentId !== 'null') {
+      const descendants = await getDescendantFolderIds(folder._id);
+      if (descendants.some(id => id.toString() === parentId.toString())) {
+         return res.status(400).json({ message: 'Cannot move folder into itself or its subfolders' });
+      }
+    }
+    
+    folder.parentId = (parentId && parentId !== 'null') ? parentId : null;
+    await folder.save();
+    res.json({ message: 'Folder moved successfully', folder });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error moving folder' });
+  }
+});
+
 // @route   PUT api/folders/:id
 // @desc    Update/Rename a folder (Admin/Teacher for roadmaps, Admin only for others)
 router.put('/:id', auth, async (req, res) => {
@@ -127,6 +159,7 @@ router.put('/:id', auth, async (req, res) => {
   }
 });
 
+
 // @route   DELETE api/folders/:id
 // @desc    Delete folder and cascade delete its contents (Admin/Teacher for roadmaps, Admin only for others)
 router.delete('/:id', auth, async (req, res) => {
@@ -166,3 +199,4 @@ router.delete('/:id', auth, async (req, res) => {
 });
 
 module.exports = router;
+
