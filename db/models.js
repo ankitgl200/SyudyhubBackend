@@ -410,4 +410,11 @@ const TeamMemberSchema = new Schema({
 });
 const TeamMember = mongoose.model('TeamMember', TeamMemberSchema);
 
+const SystemSettingSchema = new Schema({
+  key: { type: String, required: true, unique: true },
+  value: { type: Schema.Types.Mixed, required: true }
+});
+const SystemSetting = mongoose.model('SystemSetting', SystemSettingSchema);
+
 module.exports.TeamMember = TeamMember;
+module.exports.SystemSetting = SystemSetting;
