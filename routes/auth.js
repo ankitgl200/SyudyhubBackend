@@ -111,11 +111,11 @@ router.post('/signup', async (req, res) => {
     // Create welcome notification
     let welcomeMsg = '';
     if (role === 'student') {
-      welcomeMsg = `Welcome to StudyHub! 📚\nExplore notes, papers, and resources to boost your learning. Stay consistent and keep growing! 🚀\n\n📌 Note: A PDF User Manual has been automatically downloaded to guide you through all of StudyHub's features. If the manual did not download automatically, you can download it manually at any time:\n👉 On PC: Click your name in the top-right corner to open the dropdown and click "Download Manual".\n👉 On Mobile: Go to the "Profile" tab, scroll down to the "Account" section, and tap "Download Manual".\n\nThank you\nTeam Studyhub.`;
+      welcomeMsg = `Welcome to StudyMyte! 📚\nExplore notes, papers, and resources to boost your learning. Stay consistent and keep growing! 🚀\n\n📌 Note: A PDF User Manual has been automatically downloaded to guide you through all of StudyMyte's features. If the manual did not download automatically, you can download it manually at any time:\n👉 On PC: Click your name in the top-right corner to open the dropdown and click "Download Manual".\n👉 On Mobile: Go to the "Profile" tab, scroll down to the "Account" section, and tap "Download Manual".\n\nThank you\nTeam StudyMyte.`;
     } else if (role === 'educator') {
-      welcomeMsg = `Dear Sir/Ma’am,\n\nWe warmly welcome you to our platform as an educator and sincerely thank you for joining us. Your presence and experience will greatly benefit our student community.\n\nWe kindly request you to upload any resources you have, such as notes, previous year questions, or lab manuals, which can help students in their learning journey.\n\n📌 Note: A PDF User Manual has been automatically downloaded to guide you through all of StudyHub's features. If the manual did not download automatically, you can download it manually at any time:\n👉 On PC: Click your name in the top-right corner to open the dropdown and click "Download Manual".\n👉 On Mobile: Go to the "Profile" tab, scroll down to the "Account" section, and tap "Download Manual".\n\nIn case you face any issues while using the platform or otherwise, please feel free to use the Help & Support page—we are always here to assist you.\n\nThank you once again for being a valuable part of our initiative.\n\nThank you\nTeam Studyhub`;
+      welcomeMsg = `Dear Sir/Ma’am,\n\nWe warmly welcome you to our platform as an educator and sincerely thank you for joining us. Your presence and experience will greatly benefit our student community.\n\nWe kindly request you to upload any resources you have, such as notes, previous year questions, or lab manuals, which can help students in their learning journey.\n\n📌 Note: A PDF User Manual has been automatically downloaded to guide you through all of StudyMyte's features. If the manual did not download automatically, you can download it manually at any time:\n👉 On PC: Click your name in the top-right corner to open the dropdown and click "Download Manual".\n👉 On Mobile: Go to the "Profile" tab, scroll down to the "Account" section, and tap "Download Manual".\n\nIn case you face any issues while using the platform or otherwise, please feel free to use the Help & Support page—we are always here to assist you.\n\nThank you once again for being a valuable part of our initiative.\n\nThank you\nTeam StudyMyte`;
     } else if (role === 'admin') {
-      welcomeMsg = `Welcome Admin! ⚙️\n\nYou have full control to manage content, users, and keep StudyHub running smoothly. Let’s build something impactful! 🚀\n\n📌 Note: A PDF User Manual has been automatically downloaded to guide you through all of StudyHub's features. If the manual did not download automatically, you can download it manually at any time:\n👉 On PC: Click your name in the top-right corner to open the dropdown and click "Download Manual".\n👉 On Mobile: Go to the "Profile" tab, scroll down to the "Account" section, and tap "Download Manual".\n\nThank you\nTeam Studyhub`;
+      welcomeMsg = `Welcome Admin! ⚙️\n\nYou have full control to manage content, users, and keep StudyMyte running smoothly. Let’s build something impactful! 🚀\n\n📌 Note: A PDF User Manual has been automatically downloaded to guide you through all of StudyMyte's features. If the manual did not download automatically, you can download it manually at any time:\n👉 On PC: Click your name in the top-right corner to open the dropdown and click "Download Manual".\n👉 On Mobile: Go to the "Profile" tab, scroll down to the "Account" section, and tap "Download Manual".\n\nThank you\nTeam StudyMyte`;
     }
 
     if (welcomeMsg) {
@@ -1126,6 +1126,35 @@ router.put('/users/by-phone/:phone/email', isAdmin, async (req, res) => {
   } catch (err) {
     console.error('Admin update user email by phone error:', err);
     res.status(500).json({ message: 'Server error updating user email' });
+  }
+});
+// @route   POST api/auth/fcm-token
+// @desc    Update or register an FCM device token for the user
+router.post('/fcm-token', auth, async (req, res) => {
+  const { token } = req.body;
+  if (!token) {
+    return res.status(400).json({ message: 'FCM Token is required' });
+  }
+
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (!user.fcmTokens) {
+      user.fcmTokens = [];
+    }
+
+    if (!user.fcmTokens.includes(token)) {
+      user.fcmTokens.push(token);
+      await user.save();
+    }
+
+    res.json({ message: 'FCM token successfully registered' });
+  } catch (err) {
+    console.error('Save FCM token error:', err);
+    res.status(500).json({ message: 'Server error saving FCM token' });
   }
 });
 
