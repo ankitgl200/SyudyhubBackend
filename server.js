@@ -53,6 +53,7 @@ const helpRoutes = require('./routes/help');
 const notificationRoutes = require('./routes/notifications');
 const reviewRoutes = require('./routes/reviews');
 const teamRoutes = require('./routes/team');
+const settingsRoutes = require('./routes/settings');
 
 // Mount API routes
 app.use('/api/auth', authRoutes);
@@ -63,6 +64,7 @@ app.use('/api/help', helpRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/team', teamRoutes);
+app.use('/api/settings', settingsRoutes);
 
 // Seed default data using Mongoose
 async function seedDefaultData() {
@@ -198,7 +200,7 @@ mongoose.connect(config.MONGODB_URI)
     
     const PORT = config.PORT;
     app.listen(PORT, () => {
-      console.log(`Studyhub Server running on port ${PORT}`);
+      console.log(`StudyMyte Server running on port ${PORT}`);
     });
   })
   .catch(err => {
