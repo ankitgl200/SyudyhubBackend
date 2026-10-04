@@ -4,9 +4,30 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const cloudinary = require('cloudinary').v2;
-const { Document, Announcement, Notification } = require('../db/models');
+const { Document, Announcement, Notification, User } = require('../db/models');
 const config = require('../config');
 const { auth, isStaff, isAdmin } = require('../middleware/auth');
+const admin = require('../services/firebaseAdmin');
+
+async function sendMulticastPushNotification(title, body, url) {
+  try {
+    const users = await User.find({ fcmTokens: { $exists: true, $not: { $size: 0 } } });
+    const tokens = [];
+    users.forEach(u => tokens.push(...u.fcmTokens));
+    if (tokens.length === 0) return;
+
+    const message = {
+      notification: { title, body },
+      data: { url: url || '/' },
+      tokens: [...new Set(tokens)]
+    };
+
+    const response = await admin.messaging().sendEachForMulticast(message);
+    console.log(response.successCount + ' messages were sent successfully');
+  } catch (err) {
+    console.error('Error sending multicast push notification:', err);
+  }
+}
 
 const getAbsoluteUrl = (req, url) => {
   if (!url) return null;
@@ -227,7 +248,7 @@ router.post('/upload', isStaff, (req, res) => {
       } else if (isCloudinaryConfigured) {
         // Upload to Cloudinary
         const uploadResult = await cloudinary.uploader.upload(req.file.path, {
-          folder: 'studyhub',
+          folder: 'studymyte',
           resource_type: 'raw',
           access_mode: 'public'
         });
@@ -288,6 +309,11 @@ router.post('/upload', isStaff, (req, res) => {
           const idsToDelete = oldest.map(a => a._id);
           await Announcement.deleteMany({ _id: { $in: idsToDelete } });
         }
+        
+        // Send Firebase Push Notification
+        const pushTitle = `New ${displayType} Uploaded`;
+        const pushBody = `"${title}" has been uploaded by ${uploaderName}.`;
+        await sendMulticastPushNotification(pushTitle, pushBody, fileUrl);
       } catch (annErr) {
         console.error('Failed to create automatic announcement:', annErr);
       }
@@ -575,7 +601,7 @@ router.post('/contribute', auth, (req, res) => {
       } else if (isCloudinaryConfigured) {
         // Upload to Cloudinary
         const uploadResult = await cloudinary.uploader.upload(req.file.path, {
-          folder: 'studyhub',
+          folder: 'studymyte',
           resource_type: 'raw',
           access_mode: 'public'
         });
@@ -698,6 +724,11 @@ router.post('/approve/:id', isAdmin, async (req, res) => {
         const idsToDelete = oldest.map(a => a._id);
         await Announcement.deleteMany({ _id: { $in: idsToDelete } });
       }
+
+      // Send Firebase Push Notification
+      const pushTitle = `New ${displayType} Uploaded`;
+      const pushBody = `"${doc.title}" has been uploaded by ${doc.uploadedBy}.`;
+      await sendMulticastPushNotification(pushTitle, pushBody, doc.fileUrl);
     } catch (annErr) {
       console.error('Failed to create automatic announcement on approval:', annErr);
     }
