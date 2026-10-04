@@ -53,6 +53,10 @@ const UserSchema = new Schema({
     deviceType: { type: String, default: 'Unknown' },
     deviceModel: { type: String, default: 'Unknown' },
     ip: { type: String, default: 'Unknown' }
+  },
+  fcmTokens: {
+    type: [String],
+    default: []
   }
 });
 
@@ -222,8 +226,7 @@ const HelpRequest = mongoose.model('HelpRequest', HelpRequestSchema);
 const NotificationSchema = new Schema({
   recipientId: {
     type: Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
+    ref: 'User'
   },
   message: {
     type: String,
