@@ -613,6 +613,64 @@ router.put('/email', auth, async (req, res) => {
   }
 });
 
+// @route   PUT api/auth/name
+// @desc    Update current user's name (for all roles: student, educator, admin, superadmin)
+//          Strictly only updates the name field - phone, email, and other credentials cannot be modified here.
+router.put('/name', auth, async (req, res) => {
+  const { name } = req.body;
+
+  if (!name || typeof name !== 'string') {
+    return res.status(400).json({ message: 'Please enter a valid name' });
+  }
+
+  const trimmedName = name.trim().replace(/\s+/g, ' ');
+  if (trimmedName.length < 2 || trimmedName.length > 60) {
+    return res.status(400).json({ message: 'Name must be between 2 and 60 characters long' });
+  }
+
+  // Allow standard letters from any language, spaces, dots, hyphens, apostrophes
+  const validNameRegex = /^[\p{L}\s.'-]+$/u;
+  if (!validNameRegex.test(trimmedName)) {
+    return res.status(400).json({ message: 'Name should contain valid alphabetical characters' });
+  }
+
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Explicitly update ONLY the name field
+    user.name = trimmedName;
+    await user.save();
+
+    // Synchronize uploadedBy in Document collection if user has uploads
+    try {
+      await Document.updateMany(
+        { uploadedByUserId: user._id },
+        { $set: { uploadedBy: trimmedName } }
+      );
+    } catch (syncErr) {
+      console.warn('Note: Document uploader name sync skipped or errored:', syncErr.message);
+    }
+
+    res.json({
+      message: 'Name updated successfully!',
+      user: {
+        id: user._id,
+        name: user.name,
+        phone: user.phone,
+        email: user.email || null,
+        role: user.role,
+        approved: user.approved
+      }
+    });
+  } catch (err) {
+    console.error('Update name error:', err);
+    res.status(500).json({ message: 'Server error updating name' });
+  }
+});
+
 // ============================================================================
 // SECURE SERVER-AUTHORITATIVE OTP & PASSWORD RESET ENDPOINTS
 // ============================================================================
