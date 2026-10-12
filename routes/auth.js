@@ -7,7 +7,13 @@ const { User, Document, Notification, OtpVerification, PasswordResetOtp } = requ
 const config = require('../config');
 const { auth, isAdmin, isSuperAdmin } = require('../middleware/auth');
 const { sendOtpEmail, maskEmail } = require('../services/emailService');
-const { otpRequestLimiter, otpVerifyLimiter } = require('../middleware/security');
+const { 
+  otpRequestLimiter, 
+  otpVerifyLimiter, 
+  loginLimiter, 
+  signupLimiter, 
+  passwordResetLimiter 
+} = require('../middleware/security');
 
 function parseUserAgent(userAgent, ip = 'Unknown') {
   let browser = 'Unknown';
@@ -58,7 +64,7 @@ function parseUserAgent(userAgent, ip = 'Unknown') {
 
 // @route   POST api/auth/signup
 // @desc    Register user (instant approval for student, admin approval for educator/admin)
-router.post('/signup', async (req, res) => {
+router.post('/signup', signupLimiter, async (req, res) => {
   const { name, phone, email, password, role } = req.body;
 
   // Simple validation
@@ -94,15 +100,23 @@ router.post('/signup', async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Students are approved automatically. Educators & Admins require admin approval.
-    const approved = role === 'student';
+    // Students are approved automatically.
+    // If no approved admin exists in the system yet (initial bootstrap), the first registering admin becomes approved Super Admin.
+    const adminCount = await User.countDocuments({ role: { $in: ['admin', 'superadmin'] }, approved: true });
+    let finalRole = role;
+    let approved = role === 'student';
+
+    if (adminCount === 0 && role === 'admin') {
+      finalRole = 'superadmin';
+      approved = true;
+    }
 
     const newUser = new User({
       name,
       phone,
       email: normalizedEmail,
       password: hashedPassword,
-      role,
+      role: finalRole,
       approved
     });
     
@@ -161,7 +175,7 @@ router.post('/signup', async (req, res) => {
 
 // @route   POST api/auth/login
 // @desc    Authenticate user & get token
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   const { phone, password } = req.body;
 
   // Simple validation
@@ -195,7 +209,7 @@ router.post('/login', async (req, res) => {
 
     // Update login timestamps and device info
     const userAgent = req.headers['user-agent'] || '';
-    const clientIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || 'Unknown';
+    const clientIp = req.ip || req.socket?.remoteAddress || 'Unknown';
     
     const isNewUser = !user.lastLogin;
     user.lastLogin = new Date();
@@ -348,9 +362,12 @@ router.delete('/users/:id', isAdmin, async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Permanent Super Admin protection
-    if (userToDelete.phone === '8218325600') {
-      return res.status(400).json({ message: 'Cannot delete the primary Super Admin account' });
+    // Protect the last remaining Super Admin from being deleted
+    if (userToDelete.role === 'superadmin') {
+      const superAdminCount = await User.countDocuments({ role: 'superadmin' });
+      if (superAdminCount <= 1) {
+        return res.status(400).json({ message: 'Cannot delete the only remaining Super Admin account' });
+      }
     }
 
     // Can't delete self
@@ -743,7 +760,7 @@ async function handleRequestOtp(req, res) {
     // Generate unique verification transaction ID
     const verificationId = crypto.randomUUID();
 
-    const clientIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || 'Unknown';
+    const clientIp = req.ip || req.socket?.remoteAddress || 'Unknown';
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
     // Store verification transaction in database
@@ -1102,7 +1119,7 @@ router.post('/forgot-password', otpRequestLimiter, handleRequestOtp); // Alias f
 router.post('/resend-otp', otpRequestLimiter, handleResendOtp);
 router.post('/verify-otp', otpVerifyLimiter, handleVerifyOtp);
 router.post('/verify-reset-otp', otpVerifyLimiter, handleVerifyOtp); // Alias for backwards compatibility
-router.post('/reset-password-final', handleResetPasswordFinal);
+router.post('/reset-password-final', passwordResetLimiter, handleResetPasswordFinal);
 
 // @route   PUT api/auth/users/:id/email
 // @desc    Admin updates any user's email address by User ID
