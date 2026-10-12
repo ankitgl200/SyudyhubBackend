@@ -9,6 +9,12 @@ const { securityHeaders, strictCors } = require('./middleware/security');
 
 const app = express();
 
+// Express trust proxy configuration based on verified topology
+// Only trust proxy hops configured via environment (Render/Vercel reverse proxy)
+if (config.TRUST_PROXY !== false && config.TRUST_PROXY !== undefined) {
+  app.set('trust proxy', config.TRUST_PROXY);
+}
+
 // Apply Security Headers & Strict CORS
 app.use(securityHeaders);
 app.use(strictCors);
@@ -71,24 +77,7 @@ async function seedDefaultData() {
   try {
     const { User, Folder, MessageTemplate } = require('./db/models');
 
-    // 1. Seed Permanent Super Admin
-    const superAdminPhone = '8218325600';
-    const existingSuperAdmin = await User.findOne({ phone: superAdminPhone });
-    
-    if (!existingSuperAdmin) {
-      const salt = await bcrypt.genSalt(10);
-      const hashedPassword = await bcrypt.hash('ankit@2004', salt);
-      
-      const newAdmin = new User({
-        name: 'ankit Ghugtyal',
-        phone: superAdminPhone,
-        password: hashedPassword,
-        role: 'superadmin',
-        approved: true
-      });
-      await newAdmin.save();
-
-    }
+    // (Super Admin and user accounts are created through secure registration)
 
     // 3. Seed default subject folders if empty
     // Notes folders
