@@ -4,7 +4,9 @@
   "description": "StudyMyte - notes, PYQs, and resources (Vanilla JS / MongoDB)",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test test_duplicate_paper_security.js test_document_security.js test_rate_limit_security.js",
+    "migrate:duplicates": "node scripts/migrate_paper_duplicates.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -15,6 +17,7 @@
     "firebase-admin": "^14.5.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.3.1",
-    "multer": "^1.4.5-lts.1"
+    "multer": "^1.4.5-lts.1",
+    "pdf-parse": "^2.4.5"
   }
 }
