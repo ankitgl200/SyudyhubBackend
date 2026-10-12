@@ -26,9 +26,11 @@ function createRateLimiter({ windowMs, max, message, keyGenerator }) {
   }, 5 * 60 * 1000).unref(); // unref so timer doesn't keep node process open in tests
 
   return (req, res, next) => {
+    // Derive client identifier using Express's trust proxy verified req.ip
+    // Never trust client-supplied X-Forwarded-For headers directly
     const key = keyGenerator 
       ? keyGenerator(req) 
-      : (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || 'unknown-ip';
+      : (req.ip || req.socket?.remoteAddress || 'unknown-ip');
 
     const now = Date.now();
     let record = store.get(key);
@@ -45,7 +47,9 @@ function createRateLimiter({ windowMs, max, message, keyGenerator }) {
     res.setHeader('X-RateLimit-Reset', Math.ceil((record.startTime + windowMs) / 1000));
 
     if (record.count > max) {
-      console.warn(`[Security Alert] Rate limit exceeded for key [${key}] on route ${req.method} ${req.originalUrl}`);
+      // Sanitize URL for logging to avoid exposing tokens, secrets, or sensitive querystring parameters
+      const sanitizedRoute = `${req.method} ${(req.baseUrl || '') + (req.path || '')}`;
+      console.warn(`[Security Alert] Rate limit exceeded for IP [${key}] on route ${sanitizedRoute}`);
       return res.status(429).json({
         success: false,
         message: message || 'Too many requests. Please slow down and try again later.'
@@ -94,7 +98,7 @@ function strictCors(req, res, next) {
     return next();
   }
 
-  if (allowed.includes(origin) || origin.endsWith('.vercel.app')) {
+  if (allowed.includes(origin) || origin.endsWith('.vercel.app') || origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:') || origin.startsWith('http://192.168.') || origin.startsWith('http://172.') || origin.startsWith('http://10.')) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
@@ -117,18 +121,42 @@ function strictCors(req, res, next) {
 }
 
 // Pre-configured Rate Limiters
+// 1. OTP Request Limiter: Prevents SMS/Email flooding & abuse
 const otpRequestLimiter = createRateLimiter({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 5,
   message: 'Too many OTP requests from this IP. Please try again after 15 minutes.'
 });
 
+// 2. OTP Verify Limiter: Prevents OTP brute-force guessing
 const otpVerifyLimiter = createRateLimiter({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 10,
   message: 'Too many verification attempts from this IP. Please try again later.'
 });
 
+// 3. Login Limiter: Protects against credential stuffing & password brute-force
+const loginLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,
+  message: 'Too many login attempts from this IP. Please try again after 15 minutes.'
+});
+
+// 4. Signup Limiter: Protects against automated account creation spam
+const signupLimiter = createRateLimiter({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 5,
+  message: 'Too many accounts created from this IP. Please try again after an hour.'
+});
+
+// 5. Password Reset Limiter: Protects password recovery endpoints
+const passwordResetLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5,
+  message: 'Too many password reset requests. Please try again after 15 minutes.'
+});
+
+// 6. General Auth Limiter: Fallback threshold for auth routes
 const authGeneralLimiter = createRateLimiter({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100,
@@ -141,5 +169,8 @@ module.exports = {
   strictCors,
   otpRequestLimiter,
   otpVerifyLimiter,
+  loginLimiter,
+  signupLimiter,
+  passwordResetLimiter,
   authGeneralLimiter
 };
