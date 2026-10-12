@@ -143,11 +143,61 @@ const DocumentSchema = new Schema({
     type: Boolean,
     default: false
   },
+  // --- Smart Duplicate Paper Detection Fields ---
+  fileHash: {
+    type: String,
+    trim: true,
+    index: true,
+    default: null
+  },
+  fileSizeBytes: {
+    type: Number,
+    default: 0
+  },
+  pageCount: {
+    type: Number,
+    default: null
+  },
+  hasText: {
+    type: Boolean,
+    default: false
+  },
+  textLength: {
+    type: Number,
+    default: 0
+  },
+  qualityScore: {
+    type: Number,
+    default: null
+  },
+  examIdentity: {
+    normalizedSubject: { type: String, trim: true, default: null },
+    branch: { type: String, trim: true, default: null },
+    semester: { type: String, trim: true, default: null },
+    year: { type: String, trim: true, default: null },
+    examType: { type: String, trim: true, default: 'unknown' },
+    paperCode: { type: String, trim: true, default: null },
+    identityKey: { type: String, trim: true, index: true, default: null }
+  },
+  duplicateStatus: {
+    isCanonical: { type: Boolean, default: false, index: true },
+    isDuplicate: { type: Boolean, default: false, index: true },
+    canonicalDocumentId: { type: Schema.Types.ObjectId, ref: 'Document', default: null },
+    duplicateGroupId: { type: Schema.Types.ObjectId, ref: 'DuplicatePaperGroup', index: true, default: null },
+    matchConfidence: { type: String, enum: ['exact', 'strong', 'possible', 'none'], default: 'none' },
+    matchReason: { type: String, trim: true, default: '' },
+    reviewedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    reviewedAt: { type: Date, default: null }
+  },
   createdAt: {
     type: Date,
     default: Date.now
   }
 });
+
+// Indexes for high performance duplicate queries
+DocumentSchema.index({ fileHash: 1, status: 1 });
+DocumentSchema.index({ 'examIdentity.identityKey': 1, status: 1 });
 
 // Announcement Schema
 const AnnouncementSchema = new Schema({
@@ -384,7 +434,62 @@ const OtpVerificationSchema = new Schema({
 });
 
 const OtpVerification = mongoose.model('OtpVerification', OtpVerificationSchema);
-const PasswordResetOtp = OtpVerification; // Backward-compatible alias
+const PasswordResetOtp = OtpVerification; // Alias if referenced as PasswordResetOtp
+
+// Duplicate Paper Group Schema (for Grouped Admin Review)
+const DuplicatePaperGroupSchema = new Schema({
+  identityKey: {
+    type: String,
+    required: true,
+    unique: true,
+    trim: true,
+    index: true
+  },
+  subject: { type: String, trim: true, default: 'General Paper' },
+  branch: { type: String, trim: true, default: 'All Branches' },
+  semester: { type: String, trim: true, default: null },
+  year: { type: String, trim: true, default: null },
+  examType: { type: String, trim: true, default: 'unknown' },
+  paperCode: { type: String, trim: true, default: null },
+  status: {
+    type: String,
+    enum: ['needs_review', 'resolved', 'dismissed'],
+    default: 'needs_review',
+    index: true
+  },
+  canonicalDocumentId: {
+    type: Schema.Types.ObjectId,
+    ref: 'Document',
+    default: null
+  },
+  resolvedBy: {
+    type: Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+  resolvedAt: {
+    type: Date,
+    default: null
+  },
+  resolutionReason: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now,
+    index: true
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now
+  }
+});
+
+DuplicatePaperGroupSchema.index({ status: 1, createdAt: -1 });
+
+const DuplicatePaperGroup = mongoose.model('DuplicatePaperGroup', DuplicatePaperGroupSchema);
 
 module.exports = {
   User,
@@ -396,7 +501,8 @@ module.exports = {
   MessageTemplate,
   Review,
   OtpVerification,
-  PasswordResetOtp
+  PasswordResetOtp,
+  DuplicatePaperGroup
 };
 
 // Team Member Schema
