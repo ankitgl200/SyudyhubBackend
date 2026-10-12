@@ -81,7 +81,7 @@ async function auth(req, res, next) {
     const now = new Date();
     if (!user.lastActive || (now - new Date(user.lastActive)) > 60000) {
       const userAgent = req.headers['user-agent'] || '';
-      const clientIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || 'Unknown';
+      const clientIp = req.ip || req.socket?.remoteAddress || 'Unknown';
       user.lastActive = now;
       user.deviceInfo = parseUserAgent(userAgent, clientIp);
       await user.save();
