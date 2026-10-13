@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test_duplicate_paper_security.js test_document_security.js test_rate_limit_security.js",
+    "test": "node --test test_duplicate_paper_security.js test_document_security.js test_rate_limit_security.js test_welcome_email.js",
     "migrate:duplicates": "node scripts/migrate_paper_duplicates.js"
   },
   "dependencies": {
