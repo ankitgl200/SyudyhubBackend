@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const { User, Document, Notification, OtpVerification, PasswordResetOtp } = require('../db/models');
 const config = require('../config');
 const { auth, isAdmin, isSuperAdmin } = require('../middleware/auth');
-const { sendOtpEmail, maskEmail } = require('../services/emailService');
+const { sendOtpEmail, sendWelcomeEmail, maskEmail } = require('../services/emailService');
 const { 
   otpRequestLimiter, 
   otpVerifyLimiter, 
@@ -140,6 +140,14 @@ router.post('/signup', signupLimiter, async (req, res) => {
       });
       await welcomeNotification.save();
     }
+
+    // Dispatch welcome email to the newly registered user on their registered email
+    sendWelcomeEmail({
+      email: newUser.email,
+      name: newUser.name
+    }).catch(err => {
+      console.error(`[Welcome Email Error] Failed to dispatch welcome email to ${maskEmail(newUser.email)}:`, err.message);
+    });
 
     if (!approved) {
       return res.status(201).json({
