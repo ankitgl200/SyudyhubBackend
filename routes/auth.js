@@ -359,6 +359,204 @@ router.get('/users', isAdmin, async (req, res) => {
   }
 });
 
+// Field mapping and helpers for User Export (Super Admin Only)
+const USER_EXPORT_FIELDS = {
+  name: { label: 'Full Name', get: u => u.name || '' },
+  phone: { label: 'Phone Number', get: u => u.phone || '' },
+  email: { label: 'Email Address', get: u => u.email || '' },
+  role: {
+    label: 'Role',
+    get: u => {
+      if (u.role === 'superadmin') return 'Super Admin';
+      if (u.role === 'educator') return 'Teacher/Educator';
+      if (u.role === 'admin') return 'Admin';
+      return 'Student';
+    }
+  },
+  approved: { label: 'Approval Status', get: u => u.approved ? 'Approved' : 'Pending' },
+  createdAt: { label: 'Registration Date', get: u => formatExportDate(u.createdAt) },
+  lastLogin: { label: 'Last Login', get: u => formatExportDate(u.lastLogin) || 'Never' },
+  lastActive: { label: 'Last Active', get: u => formatExportDate(u.lastActive) || 'Never' },
+  points: {
+    label: 'Teacher Points',
+    get: (u, stats) => {
+      const s = stats && stats[u._id?.toString()];
+      return s ? s.points : (u.role === 'educator' ? 0 : 'N/A');
+    }
+  },
+  uploadsCount: {
+    label: 'Uploads Count',
+    get: (u, stats) => {
+      const s = stats && stats[u._id?.toString()];
+      return s ? s.uploadsCount : (u.role === 'educator' ? 0 : 'N/A');
+    }
+  },
+  browser: { label: 'Browser', get: u => u.deviceInfo?.browser || 'Unknown' },
+  os: { label: 'Operating System', get: u => u.deviceInfo?.os || 'Unknown' },
+  deviceType: { label: 'Device Type', get: u => u.deviceInfo?.deviceType || 'Unknown' },
+  deviceModel: { label: 'Device Model', get: u => u.deviceInfo?.deviceModel || 'Unknown' },
+  ip: { label: 'IP Address', get: u => u.deviceInfo?.ip || 'Unknown' },
+  id: { label: 'User ID', get: u => u._id ? u._id.toString() : '' }
+};
+
+function formatExportDate(date) {
+  if (!date) return '';
+  try {
+    const d = new Date(date);
+    if (isNaN(d.getTime())) return '';
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  } catch {
+    return '';
+  }
+}
+
+function escapeCsvCell(val) {
+  if (val === null || val === undefined) return '';
+  const str = String(val);
+  if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+// Handler for user export
+async function handleUserExport(req, res) {
+  try {
+    const role = req.body?.role || req.query?.role || 'all';
+    const status = req.body?.status || req.query?.status || 'all';
+    const search = req.body?.search || req.query?.search || '';
+    const format = req.body?.format || req.query?.format || 'csv';
+    const preview = req.body?.preview === true || req.query?.preview === 'true';
+
+    let requestedFields = req.body?.fields || req.query?.fields;
+    if (typeof requestedFields === 'string') {
+      requestedFields = requestedFields.split(',').map(s => s.trim());
+    }
+    if (!Array.isArray(requestedFields) || requestedFields.length === 0) {
+      requestedFields = ['name', 'phone', 'email', 'role', 'approved', 'createdAt'];
+    }
+
+    // Filter valid fields maintaining order
+    const validFieldKeys = requestedFields.filter(k => USER_EXPORT_FIELDS[k]);
+    const finalFieldKeys = validFieldKeys.length > 0 ? validFieldKeys : ['name', 'phone', 'email', 'role', 'approved', 'createdAt'];
+
+    // Build Mongo Query
+    const query = {};
+    if (role && role !== 'all') {
+      if (role === 'admins') {
+        query.role = { $in: ['admin', 'superadmin'] };
+      } else if (['student', 'educator', 'admin', 'superadmin'].includes(role)) {
+        query.role = role;
+      }
+    }
+
+    if (status === 'approved') {
+      query.approved = true;
+    } else if (status === 'pending') {
+      query.approved = false;
+    }
+
+    if (search && typeof search === 'string' && search.trim()) {
+      const q = search.trim();
+      query.$or = [
+        { name: { $regex: q, $options: 'i' } },
+        { phone: { $regex: q, $options: 'i' } },
+        { email: { $regex: q, $options: 'i' } }
+      ];
+    }
+
+    // Fetch matching users sorted by newest first
+    const users = await User.find(query).select('-password').sort({ createdAt: -1 }).lean();
+
+    // If teacher points/uploads needed, aggregate educator stats
+    const educatorStats = {};
+    const needsTeacherStats = finalFieldKeys.includes('points') || finalFieldKeys.includes('uploadsCount');
+    if (needsTeacherStats) {
+      const educatorIds = users.filter(u => u.role === 'educator').map(u => u._id);
+      if (educatorIds.length > 0) {
+        const docs = await Document.find({ uploadedByUserId: { $in: educatorIds } }).select('uploadedByUserId likes').lean();
+        docs.forEach(doc => {
+          const uid = doc.uploadedByUserId ? doc.uploadedByUserId.toString() : null;
+          if (uid) {
+            if (!educatorStats[uid]) educatorStats[uid] = { uploadsCount: 0, points: 0 };
+            educatorStats[uid].uploadsCount += 1;
+            const likesCount = (doc.likes && Array.isArray(doc.likes)) ? doc.likes.length : 0;
+            educatorStats[uid].points += 1 + (likesCount * 2);
+          }
+        });
+      }
+    }
+
+    // If preview requested (first 5 users for modal preview)
+    if (preview) {
+      const previewUsers = users.slice(0, 5).map(u => {
+        const row = {};
+        finalFieldKeys.forEach(k => {
+          row[k] = USER_EXPORT_FIELDS[k].get(u, educatorStats);
+        });
+        return row;
+      });
+      return res.json({
+        success: true,
+        totalCount: users.length,
+        fields: finalFieldKeys.map(k => ({ key: k, label: USER_EXPORT_FIELDS[k].label })),
+        preview: previewUsers
+      });
+    }
+
+    // If format is json
+    if (format === 'json') {
+      const formattedUsers = users.map(u => {
+        const row = {};
+        finalFieldKeys.forEach(k => {
+          row[k] = USER_EXPORT_FIELDS[k].get(u, educatorStats);
+        });
+        return row;
+      });
+      return res.json({
+        success: true,
+        count: users.length,
+        fields: finalFieldKeys.map(k => ({ key: k, label: USER_EXPORT_FIELDS[k].label })),
+        users: formattedUsers
+      });
+    }
+
+    // Build CSV with UTF-8 BOM for Microsoft Excel & Google Sheets compatibility
+    const headerRow = finalFieldKeys.map(k => escapeCsvCell(USER_EXPORT_FIELDS[k].label)).join(',');
+    const dataRows = users.map(u => {
+      return finalFieldKeys.map(k => {
+        const val = USER_EXPORT_FIELDS[k].get(u, educatorStats);
+        return escapeCsvCell(val);
+      }).join(',');
+    });
+
+    const csvContent = '\uFEFF' + [headerRow, ...dataRows].join('\r\n');
+    const safeRoleTag = (role || 'all').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const dateTag = new Date().toISOString().slice(0, 10);
+    const filename = `studymyte_users_${safeRoleTag}_${dateTag}.csv`;
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send(csvContent);
+  } catch (err) {
+    console.error('User export error:', err);
+    return res.status(500).json({ message: 'Server error while exporting users' });
+  }
+}
+
+// @route   POST api/auth/users/export
+// @route   GET api/auth/users/export
+// @desc    Export customized user data in CSV or JSON format (Super Admin only)
+router.post('/users/export', isSuperAdmin, handleUserExport);
+router.get('/users/export', isSuperAdmin, handleUserExport);
+
+// Attach helper functions to router for testing
+router.handleUserExport = handleUserExport;
+router.USER_EXPORT_FIELDS = USER_EXPORT_FIELDS;
+router.escapeCsvCell = escapeCsvCell;
+router.formatExportDate = formatExportDate;
+
 // @route   DELETE api/auth/users/:id
 // @desc    Delete any user (Super Admin can delete anyone, Admin can only delete students)
 router.delete('/users/:id', isAdmin, async (req, res) => {
