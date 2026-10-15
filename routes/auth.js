@@ -428,6 +428,18 @@ async function handleUserExport(req, res) {
     const search = req.body?.search || req.query?.search || '';
     const format = req.body?.format || req.query?.format || 'csv';
     const preview = req.body?.preview === true || req.query?.preview === 'true';
+    const limit = parseInt(req.body?.limit || req.query?.limit, 10);
+
+    const rawUserIds = req.body?.userIds || req.query?.userIds;
+    const rawExcludeUserIds = req.body?.excludeUserIds || req.query?.excludeUserIds;
+
+    const parsedUserIds = Array.isArray(rawUserIds)
+      ? rawUserIds.filter(Boolean)
+      : (typeof rawUserIds === 'string' && rawUserIds.trim() ? rawUserIds.split(',').map(s => s.trim()).filter(Boolean) : null);
+
+    const parsedExcludeUserIds = Array.isArray(rawExcludeUserIds)
+      ? rawExcludeUserIds.filter(Boolean)
+      : (typeof rawExcludeUserIds === 'string' && rawExcludeUserIds.trim() ? rawExcludeUserIds.split(',').map(s => s.trim()).filter(Boolean) : null);
 
     let requestedFields = req.body?.fields || req.query?.fields;
     if (typeof requestedFields === 'string') {
@@ -466,8 +478,23 @@ async function handleUserExport(req, res) {
       ];
     }
 
-    // Fetch matching users sorted by newest first
-    const users = await User.find(query).select('-password').sort({ createdAt: -1 }).lean();
+    if (parsedUserIds && parsedUserIds.length > 0) {
+      query._id = { $in: parsedUserIds };
+    }
+    if (parsedExcludeUserIds && parsedExcludeUserIds.length > 0) {
+      if (query._id) {
+        query._id.$nin = parsedExcludeUserIds;
+      } else {
+        query._id = { $nin: parsedExcludeUserIds };
+      }
+    }
+
+    // Fetch matching users sorted by newest first with optional limit
+    let userQuery = User.find(query).select('-password').sort({ createdAt: -1 });
+    if (!isNaN(limit) && limit > 0) {
+      userQuery = userQuery.limit(limit);
+    }
+    const users = await userQuery.lean();
 
     // If teacher points/uploads needed, aggregate educator stats
     const educatorStats = {};
