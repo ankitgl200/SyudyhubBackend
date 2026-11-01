@@ -60,6 +60,7 @@ const notificationRoutes = require('./routes/notifications');
 const reviewRoutes = require('./routes/reviews');
 const teamRoutes = require('./routes/team');
 const settingsRoutes = require('./routes/settings');
+const myteeRoutes = require('./routes/mytee');
 
 // Mount API routes
 app.use('/api/auth', authRoutes);
@@ -71,6 +72,8 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/team', teamRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/mytee', myteeRoutes);
+app.use('/api/sonic', myteeRoutes);
 
 // Seed default data using Mongoose
 async function seedDefaultData() {
