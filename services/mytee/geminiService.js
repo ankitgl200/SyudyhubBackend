@@ -14,6 +14,7 @@ const { generateAdminReport, getWebsiteOverview } = require('./adminAnalyticsSer
 const { initiatePasswordReset, verifyResetOtp, completePasswordResetForUser } = require('./inChatAuthService');
 const { OtpVerification, User, Document, Announcement } = require('../../db/models');
 const { handleFunQuery } = require('./funPersonalityService');
+const adminSuperpowers = require('./adminSuperpowersService');
 
 const SYSTEM_INSTRUCTION = `
 You are MYTEE, the official intelligent AI assistant of StudyMyte (https://studymyte.tech/#/).
@@ -117,6 +118,10 @@ CORE PLATFORM RULES:
    • When user asks to download the mobile app or get the APK:
      - Android App (.apk) is ready for direct download at /studymyte.apk.
      - iOS App is currently UNDER ACTIVE DEVELOPMENT. Inform iPhone users they can open StudyMyte in Safari and tap 'Add to Home Screen' for an app experience.
+13. ADMINISTRATIVE SUPERPOWERS (Admins & Superadmins):
+   • You can inspect any user profile, view student support tickets with AI solutions, approve documents, create announcements, and generate deep real-time platform status reports.
+   • SUPPORT TICKETS: When an admin requests to resolve or close a ticket (e.g. "resolve ticket 6ae6dbe375", "resolvbe this ticket"), call admin_manage_tickets with action "resolve" immediately!
+   • EMAIL DISPATCH DISABLED: AI direct emailing is permanently disabled. Never claim you can send emails. For communicating with users, use official In-App Notifications (admin_send_user_communication with channel "in_app").
 `;
 
 let genAiClient = null;
@@ -581,14 +586,255 @@ async function runLocalFallbackEngine(query, history = [], userContext = null, p
     actions.push({ label: 'Browse Notes', path: '/notes' });
     return { text, resources, actions, ticket, clientAction, toolsUsed, fallback: true };
   }
+  // ============================================================
+  // 1. ADMIN SUPERPOWERS FALLBACK ENGINE (Admin & Superadmin Only)
+  // ============================================================
+  const isAdminUser = userContext && (userContext.role === 'admin' || userContext.role === 'superadmin');
 
-  // 1. Admin analytics request (when user is admin)
-  if ((clean.includes('analytics') || clean.includes('how many users') || clean.includes('report') || clean.includes('stats') || clean.includes('admin report')) &&
-    userContext && (userContext.role === 'admin' || userContext.role === 'superadmin')) {
-    toolsUsed.push('get_admin_analytics');
-    const reportData = await generateAdminReport(clean, userContext);
-    text = `### Administrative Report\n\n${reportData.summary}`;
+  // 1.0 Safety Guard: Deny non-admins attempting admin dashboard actions
+  const isAdminQuery = /(site\s+status(\s+report)?|admin\s+report|all\s+support\s+tickets|pending\s+tickets|review\s+pending\s+uploads|pending\s+documents|search\s+user\s+|user\s+data\s+of\s+|user\s+details\s+|create\s+announcement|send\s+in\s+app\s+msg|send\s+notification\s+to\s+user)/i.test(clean);
+  if (isAdminQuery && !isAdminUser) {
+    text = `🔒 **Administrative Access Restricted**\n\nAdministrative Superpowers, user data queries, moderation queues, and system reporting are restricted to verified StudyMyte Administrators.\n\nIf you are an administrator, please sign in with your admin credentials: [Admin Login](https://studymyte.tech/#/login).`;
+    actions.push({ label: 'Login to StudyMyte', path: '/login' });
+    actions.push({ label: 'Browse Public Notes', path: '/notes' });
+    return { text, resources, actions, ticket, toolsUsed, fallback: true };
+  }
+
+  // 1.1 Executive Site Status & Deep Analytics Report
+  if (isAdminUser && /(site\s+status(\s+report)?|platform\s+health|system\s+status|executive\s+report|admin\s+stats|admin\s+report|overview\s+report|how\s+is\s+site\s+doing)/i.test(clean)) {
+    toolsUsed.push('admin_get_site_status_report');
+    const reportData = await adminSuperpowers.generateExecutiveSiteStatusReport(userContext);
+    const sum = reportData.executiveSummary;
+
+    text = `### 🛡️ StudyMyte Executive Platform Status Report
+*Generated in real-time on ${new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}*
+
+| Metric Category | Current Status | Details |
+| :--- | :--- | :--- |
+| **Platform Health** | ${sum.platformHealth === 'Optimal' ? '🟢 Optimal' : '🟡 Attention Needed'} | Uptime: ${sum.infrastructure.uptimeHours} |
+| **Total Registered Users** | 👥 **${sum.totalRegisteredUsers}** | Active Weekly: ${sum.activeUsersWeekly} |
+| **Archived Resources** | 📚 **${sum.totalArchivedResources}** | Notes, PYQs & Manuals |
+| **Pending Documents Queue** | ⏳ **${sum.pendingReviewItems.documents}** awaiting review | Moderation required |
+| **Open Support Tickets** | 🎫 **${sum.pendingReviewItems.tickets}** pending | Student help requests |
+| **AI Intelligence Health** | ⚡ **${sum.aiAssistantHealth.successRate}** success rate | Avg latency: ${sum.aiAssistantHealth.avgResponseTime} |
+
+#### 📋 Actionable Strategic Recommendations:
+${reportData.actionableRecommendations.map((rec, i) => `${i + 1}. ${rec}`).join('\n')}
+`;
+
+    actions.push({ label: 'Review Pending Uploads', path: 'review pending uploads' });
+    actions.push({ label: 'View Support Tickets', path: 'show all support tickets' });
     actions.push({ label: 'Open Admin Dashboard', path: '/admin' });
+    return { text, resources, actions, ticket, toolsUsed, fallback: true };
+  }
+
+  // 1.2 User Data Lookup & Search for Admin
+  const userSearchMatch = clean.match(/(?:search\s+user|show\s+user\s+data\s+(?:of|for)?|user\s+data\s+(?:of|for)?|user\s+details\s+(?:of|for)?|find\s+user|profile\s+of)\s+([^\s]+(?: [^\s]+)?)/i);
+  if (isAdminUser && (userSearchMatch || /^(show|list|view)\s+(all\s+)?(users|registered\s+users|pending\s+users|pending\s+educators|educators|students)$/i.test(clean))) {
+    toolsUsed.push('admin_manage_users');
+    const targetIdentifier = userSearchMatch ? userSearchMatch[1].trim() : '';
+
+    if (targetIdentifier && !['users', 'all', 'pending'].includes(targetIdentifier.toLowerCase())) {
+      const details = await adminSuperpowers.getUserDetails(targetIdentifier, userContext);
+      if (details.success) {
+        const u = details.user;
+        const joinedDate = u.createdAt ? new Date(u.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A';
+        const lastActiveDate = u.lastActive ? new Date(u.lastActive).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A';
+
+        text = `### 👤 User Profile: ${u.name}
+• **Email**: ${u.email}
+• **Phone**: ${u.phone}
+• **Role**: \`${u.role.toUpperCase()}\`
+• **Approval Status**: ${u.approved ? '✅ Approved' : '⏳ Pending Review'}
+• **Account Created**: ${joinedDate}
+• **Last Active**: ${lastActiveDate}
+• **Total Uploads**: ${u.stats.totalUploads} (${u.stats.approvedUploads} approved, ${u.stats.pendingUploads} pending)
+• **Likes Received**: ❤️ ${u.stats.totalLikesReceived}
+
+${u.recentUploads.length > 0 ? `#### 📤 Recent Uploads by ${u.name}:\n` + u.recentUploads.slice(0, 5).map((d, i) => `${i + 1}. **${d.title}** (${d.type.toUpperCase()}) — Status: \`${d.status}\``).join('\n') : '*No study materials uploaded yet.*'}
+`;
+        if (!u.approved) {
+          actions.push({ label: `Approve ${u.name}`, path: `approve user ${u.id}` });
+        }
+        actions.push({ label: `Send Message to ${u.name}`, path: `send in app msg to ${u.email}: ` });
+        actions.push({ label: 'Open Admin Dashboard', path: '/admin' });
+        return { text, resources, actions, ticket, toolsUsed, fallback: true };
+      }
+    }
+
+    // List users
+    const isPendingOnly = clean.includes('pending');
+    const roleFilter = clean.includes('educator') ? 'educator' : (clean.includes('student') ? 'student' : '');
+    const userList = await adminSuperpowers.searchUsers({
+      query: targetIdentifier,
+      role: roleFilter,
+      approved: isPendingOnly ? false : null,
+      limit: 10
+    }, userContext);
+
+    if (userList.users.length === 0) {
+      text = `🔍 **User Query Results**\n\nNo registered users matched your criteria (${isPendingOnly ? 'Pending Review' : 'All Users'}${roleFilter ? `, Role: ${roleFilter}` : ''}).`;
+    } else {
+      text = `### 👥 StudyMyte User Directory (${userList.count} Results)\n\n`;
+      userList.users.forEach((u, i) => {
+        const dateStr = u.createdAt ? new Date(u.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+        text += `${i + 1}. **${u.name}** (\u0060${u.role.toUpperCase()}\u0060)\n   • Email: ${u.email} | Phone: ${u.phone}\n   • Status: ${u.approved ? '✅ Approved' : '⏳ Pending'} | Total Uploads: ${u.totalUploads} | Joined: ${dateStr}\n\n`;
+      });
+      text += `You can ask me for full details of any user (e.g. *"Show user details of ${userList.users[0].name}"*).`;
+    }
+
+    actions.push({ label: 'View Pending Uploads', path: 'review pending uploads' });
+    actions.push({ label: 'Open Admin Dashboard', path: '/admin' });
+    return { text, resources, actions, ticket, toolsUsed, fallback: true };
+  }
+
+  // 1.3 Approve User Action
+  const approveUserMatch = clean.match(/^(?:please\s+)?(approve|disapprove|suspend)\s+user\s+([0-9a-fA-F]{24}|[^\s]+@[^\s]+|[^\s]+)/i);
+  if (isAdminUser && approveUserMatch) {
+    toolsUsed.push('admin_manage_users');
+    const target = approveUserMatch[2].trim();
+    let userToApprove = await User.findOne({
+      $or: [
+        { _id: target.match(/^[0-9a-fA-F]{24}$/) ? target : null },
+        { email: target.toLowerCase() },
+        { name: target }
+      ].filter(Boolean)
+    });
+
+    if (userToApprove) {
+      const res = await adminSuperpowers.updateUserStatus({ targetUserId: userToApprove._id.toString(), action: 'approve' }, userContext);
+      text = `✅ **User Approved Successfully!**\n\n${res.message}\n\nAn automated congratulations in-app message has been dispatched to ${userToApprove.name}.`;
+      actions.push({ label: 'Open Admin Dashboard', path: '/admin' });
+      return { text, resources, actions, ticket, toolsUsed, fallback: true };
+    }
+  }
+
+  // 1.4 Support Tickets Inspection & Intelligent Solutions
+  if (isAdminUser && /(show|list|view|get)\s+(all\s+)?(support\s+tickets|help\s+requests|tickets|student\s+issues)|support\s+tickets|pending\s+tickets/i.test(clean)) {
+    toolsUsed.push('admin_manage_tickets');
+    const isPending = !clean.includes('resolved') && !clean.includes('all');
+    const ticketData = await adminSuperpowers.getAllSupportTickets({ status: isPending ? 'pending' : 'all', limit: 8 }, userContext);
+
+    if (ticketData.tickets.length === 0) {
+      text = `🎉 **Support Inbox Clear!**\n\nThere are currently zero open student help request tickets. All inquiries have been successfully resolved.`;
+    } else {
+      text = `### 🎫 Student Support Tickets (${ticketData.count} ${isPending ? 'Pending' : 'Total'} Requests)\n\n`;
+      ticketData.tickets.forEach((t, i) => {
+        const dStr = t.createdAt ? new Date(t.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+        text += `---\n#### ${i + 1}. [Ticket #${t.id.slice(-6)}] **${t.subject}** (${t.status.toUpperCase()})\n`;
+        text += `• **Student**: ${t.userName} (${t.email} | ${t.phone}) • *${dStr}*\n`;
+        text += `• **Issue Description**: "${t.message}"\n\n`;
+        text += `💡 **AI Suggested Solution (${t.aiAnalysis.category})**:\n`;
+        t.aiAnalysis.recommendedSteps.forEach(step => {
+          text += `  - ${step}\n`;
+        });
+        text += `\n💬 **Suggested Quick Reply**:\n> "${t.aiAnalysis.suggestedReply.replace(/\n/g, ' ')}"\n\n`;
+      });
+      text += `You can tell me to resolve any ticket (e.g. *"Resolve ticket #${ticketData.tickets[0].id.slice(-6)}"*).\n`;
+    }
+
+    if (ticketData.tickets.length > 0) {
+      actions.push({ label: `Resolve Ticket #${ticketData.tickets[0].id.slice(-6)}`, path: `resolve ticket ${ticketData.tickets[0].id}` });
+    }
+    actions.push({ label: 'Open Admin Dashboard', path: '/admin' });
+    return { text, resources, actions, ticket, toolsUsed, fallback: true };
+  }
+
+  // 1.5 Resolve Support Ticket (Resilient parser supporting full ObjectId, partial hex, or "this ticket")
+  const resolveTicketMatch = clean.match(/^(?:please\s+)?(?:resolve|resolvbe|close|solve|mark\s+resolved)\s+(?:the\s+)?(?:ticket|issue|request)?\s*(?:#)?([0-9a-fA-F]+|this\s+ticket|this|it)?/i);
+  if (isAdminUser && resolveTicketMatch) {
+    toolsUsed.push('admin_manage_tickets');
+    const rawId = (resolveTicketMatch[1] || '').trim();
+    const res = await adminSuperpowers.resolveOrReplySupportTicket({
+      ticketId: rawId,
+      markResolved: true
+    }, userContext);
+
+    text = `✅ **Ticket Resolved Successfully!**\n\n${res.message}\n\nA resolution confirmation notification was dispatched to the student.`;
+    actions.push({ label: 'View Remaining Tickets', path: 'show all support tickets' });
+    actions.push({ label: 'Open Admin Dashboard', path: '/admin' });
+    return { text, resources, actions, ticket, toolsUsed, fallback: true };
+  }
+
+  // 1.6 Content CRUD: Review Pending Uploads & Approve
+  if (isAdminUser && /(review\s+pending\s+uploads|pending\s+documents|pending\s+uploads|unapproved\s+notes)/i.test(clean)) {
+    toolsUsed.push('admin_manage_content');
+    const pendingData = await adminSuperpowers.manageDocument({ action: 'list_pending' }, userContext);
+
+    if (pendingData.documents.length === 0) {
+      text = `📚 **Moderation Queue Clear!**\n\nThere are no pending documents waiting for review. All notes and question papers in the archive are verified and live!`;
+    } else {
+      text = `### 📑 Pending Academic Uploads (${pendingData.count} Documents Awaiting Review)\n\n`;
+      pendingData.documents.forEach((d, i) => {
+        text += `${i + 1}. **${d.title}** (\u0060${d.type.toUpperCase()}\u0060)\n   • Subject: ${d.subject} | Year: ${d.year}\n   • Contributed By: **${d.uploadedBy || 'Student'}** | ID: \u0060${d.id}\u0060\n\n`;
+      });
+      text += `You can tell me to approve any document (e.g. *"Approve document ${pendingData.documents[0].id}"*).\n`;
+    }
+
+    if (pendingData.documents.length > 0) {
+      actions.push({ label: `Approve "${pendingData.documents[0].title.slice(0, 20)}..."`, path: `approve document ${pendingData.documents[0].id}` });
+    }
+    actions.push({ label: 'Open Admin Dashboard', path: '/admin' });
+    return { text, resources, actions, ticket, toolsUsed, fallback: true };
+  }
+
+  // 1.7 Content CRUD: Approve Document Action
+  const approveDocMatch = clean.match(/^(?:please\s+)?approve\s+doc(?:ument)?\s+([0-9a-fA-F]{24}|[0-9a-fA-F]+)/i);
+  if (isAdminUser && approveDocMatch) {
+    toolsUsed.push('admin_manage_content');
+    const docId = approveDocMatch[1].trim();
+    const res = await adminSuperpowers.manageDocument({ action: 'approve', id: docId }, userContext);
+
+    text = `✅ **Document Approved!**\n\n${res.message}\n\nThe uploader has been notified that their study material is now live for all students!`;
+    actions.push({ label: 'Review More Uploads', path: 'review pending uploads' });
+    actions.push({ label: 'Browse Notes', path: '/notes' });
+    return { text, resources, actions, ticket, toolsUsed, fallback: true };
+  }
+
+  // 1.8 Content CRUD: Create Official Announcement
+  const createAnnMatch = clean.match(/^(?:please\s+)?create\s+announcement\s+title:\s*([^;]+?)\s*content:\s*(.+)/i);
+  if (isAdminUser && createAnnMatch) {
+    toolsUsed.push('admin_manage_content');
+    const annTitle = createAnnMatch[1].trim();
+    const annContent = createAnnMatch[2].trim();
+
+    const res = await adminSuperpowers.manageAnnouncement({
+      action: 'create',
+      title: annTitle,
+      content: annContent
+    }, userContext);
+
+    text = `📢 **Official Announcement Published!**\n\n• **Title**: "${annTitle}"\n• **Content**: ${annContent}\n\nAll students and educators can now see this notice in the announcements feed!`;
+    actions.push({ label: 'View Announcements', path: 'summarize announcements' });
+    actions.push({ label: 'Open Admin Dashboard', path: '/admin' });
+    return { text, resources, actions, ticket, toolsUsed, fallback: true };
+  }
+
+  // 1.9 Direct In-App Message to User (AI Email is disabled)
+  if (isAdminUser && /^(?:send\s+)?email\s+(?:to\s+)?/i.test(clean)) {
+    text = `✉️ **AI Email Dispatch Disabled**\n\nDirect emailing by AI is permanently disabled on StudyMyte.\n\nHowever, you can send an **In-App Message** and mobile push notification directly to this user's account:\n\`send in app msg to user@example.com: Your message here\``;
+    actions.push({ label: 'Open Admin Dashboard', path: '/admin' });
+    actions.push({ label: 'View All Users', path: 'show all users' });
+    return { text, resources, actions, ticket, toolsUsed, fallback: true };
+  }
+
+  const msgMatch = clean.match(/(?:send\s+(?:in\s*app\s*)?(?:msg|message|notification))\s+(?:to\s+)?([^\s:]+):\s*(.+)/i);
+  if (isAdminUser && msgMatch) {
+    toolsUsed.push('admin_send_user_communication');
+    const recipient = msgMatch[1].trim();
+    const msgText = msgMatch[2].trim();
+
+    const res = await adminSuperpowers.sendUserCommunication({
+      targetUserId: recipient.match(/^[0-9a-fA-F]{24}$/) ? recipient : null,
+      targetEmail: recipient.includes('@') ? recipient : null,
+      message: msgText,
+      channel: 'in_app',
+      subject: 'Message from StudyMyte Admin'
+    }, userContext);
+
+    text = `💬 **In-App Message Dispatched!**\n\n${res.summary}\n\n• **Recipient**: ${res.details.recipient.name} (${res.details.recipient.email})\n• **Channel**: In-App Notification & Push\n• **Message Body**: "${msgText}"`;
+    actions.push({ label: 'Open Admin Dashboard', path: '/admin' });
+    actions.push({ label: 'View All Users', path: 'show all users' });
     return { text, resources, actions, ticket, toolsUsed, fallback: true };
   }
 
@@ -823,12 +1069,20 @@ async function runLocalFallbackEngine(query, history = [], userContext = null, p
 /**
  * Converts StudyMyte tools into Gemini SDK Function Declarations format.
  */
-function buildGeminiFunctionDeclarations() {
-  return TOOL_DEFINITIONS.map(tool => ({
-    name: tool.name,
-    description: tool.description,
-    parameters: tool.parameters
-  }));
+function buildGeminiFunctionDeclarations(userContext) {
+  const isAdminUser = userContext && (userContext.role === 'admin' || userContext.role === 'superadmin');
+  return TOOL_DEFINITIONS
+    .filter(tool => {
+      if (tool.name.startsWith('admin_') || tool.name === 'get_admin_analytics') {
+        return isAdminUser;
+      }
+      return true;
+    })
+    .map(tool => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters
+    }));
 }
 
 /**
@@ -850,6 +1104,14 @@ async function generateAiResponse({ message, history = [], userContext = null, p
       newMode: funResult.newMode,
       fallback: false
     };
+  }
+
+  // Fast-track Admin Operational Commands for instant, deterministic execution
+  const isAdminUser = userContext && (userContext.role === 'admin' || userContext.role === 'superadmin');
+  const isAdminOperationalQuery = /(site\s+status|platform\s+health|system\s+status|executive\s+report|admin\s+stats|admin\s+report|overview\s+report|search\s+user|show\s+user|user\s+details|find\s+user|list\s+users|pending\s+users|pending\s+educators|approve\s+user|support\s+tickets|help\s+requests|pending\s+tickets|(?:resolve|resolvbe|close|solve|mark\s+resolved)\s+(?:the\s+)?(?:ticket|issue|request)?|(?:resolve|resolvbe|close|solve)\s+(?:this\s+)?ticket|review\s+pending|pending\s+uploads|pending\s+documents|approve\s+doc|create\s+announcement|send\s+(?:in\s*app\s*)?(?:msg|message|notification)|send\s+email|email\s+to)/i.test((message || '').trim());
+
+  if (isAdminUser && isAdminOperationalQuery) {
+    return await runLocalFallbackEngine(message, history, userContext, personalityMode);
   }
 
   const client = getGenAiClient();
@@ -883,7 +1145,7 @@ async function generateAiResponse({ message, history = [], userContext = null, p
   }
   formattedContents.push({ role: 'user', parts: [{ text: message }] });
 
-  const geminiTools = [{ functionDeclarations: buildGeminiFunctionDeclarations() }];
+  const geminiTools = [{ functionDeclarations: buildGeminiFunctionDeclarations(userContext) }];
   const timeoutMs = config.GEMINI.TIMEOUT_MS || 30000;
 
   for (const modelName of candidateModels) {
@@ -898,6 +1160,18 @@ async function generateAiResponse({ message, history = [], userContext = null, p
           currentIteration++;
 
           let dynamicInstruction = SYSTEM_INSTRUCTION;
+          if (userContext && (userContext.role === 'admin' || userContext.role === 'superadmin')) {
+            dynamicInstruction += `\n\n## ⚡ ADMINISTRATIVE SUPERPOWERS ACTIVE:
+You are in direct executive assistance mode for an authenticated StudyMyte Administrator (${userContext.name || 'Admin'}, Role: ${userContext.role}).
+Admins and Superadmins can access the AI fully, and you have direct autonomous access to the admin dashboard and platform data:
+1. USER DATA ACCESS: You can read, search, and inspect the full profile data of any user (name, email, phone number, role, approval status, total uploads, and join date) using admin_manage_users. You can approve or manage user accounts.
+2. HELP & SUPPORT TICKETS: You can view all student help and support request tickets using admin_manage_tickets, inspect issues, suggest intelligent step-by-step verified solutions for them, and resolve tickets.
+3. CONTENT CRUD: You can create, edit, or delete official announcements, and review, approve, edit, or delete uploaded documents using admin_manage_content.
+4. IN-APP MESSAGES & EMAILS: You can send in-app messages (notifications) and direct emails to specific users according to admin instructions using admin_send_user_communication.
+5. STATUS & STATS REPORT: You can generate comprehensive, real-time executive platform health and analytics reports using admin_get_site_status_report.
+Execute these tools immediately when requested by the administrator to make their work fast and seamless!
+`;
+          }
           if (personalityMode === 'sigma') {
             dynamicInstruction += `\nCURRENT ACTIVE MODE: SIGMA MODE. Channel confident, disciplined, witty sigma-grindset energy (rules of success, never skipping PYQs, 9.0+ CGPA, king, 🗿🍷).`;
           } else if (personalityMode === 'roast') {

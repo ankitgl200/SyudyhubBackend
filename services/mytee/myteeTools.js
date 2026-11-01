@@ -9,6 +9,7 @@ const { createSupportTicket, getUserTickets } = require('./supportTicketService'
 const { getWebsiteOverview, getUserActivityAnalytics, getAiUsageAnalytics, generateAdminReport } = require('./adminAnalyticsService');
 const { initiatePasswordReset, verifyResetOtp, completePasswordResetForUser } = require('./inChatAuthService');
 const { User, Document, Announcement } = require('../../db/models');
+const adminSuperpowers = require('./adminSuperpowersService');
 
 // Tool definitions for Google Gemini API Function Calling
 const TOOL_DEFINITIONS = [
@@ -244,6 +245,149 @@ const TOOL_DEFINITIONS = [
         }
       },
       required: ['metricType']
+    }
+  },
+  {
+    name: 'admin_manage_users',
+    description: 'ADMIN/SUPERADMIN ONLY: Search user accounts, read detailed user profile data (name, email, phone, role, uploads count, registration date), or update user approval status.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        action: {
+          type: 'STRING',
+          enum: ['search', 'get_details', 'approve', 'disapprove', 'delete'],
+          description: 'Action to perform: "search" to query users, "get_details" for deep profile, "approve" to approve account'
+        },
+        query: {
+          type: 'STRING',
+          description: 'Search string (name, email, or phone number)'
+        },
+        identifier: {
+          type: 'STRING',
+          description: 'Target user ID, email address, or name for detailed lookup or status update'
+        },
+        role: {
+          type: 'STRING',
+          enum: ['student', 'educator', 'admin'],
+          description: 'Optional role filter'
+        },
+        approved: {
+          type: 'BOOLEAN',
+          description: 'Optional filter for approval status'
+        }
+      },
+      required: ['action']
+    }
+  },
+  {
+    name: 'admin_manage_tickets',
+    description: 'ADMIN/SUPERADMIN ONLY: View all student help and support request tickets, inspect issue details with AI-generated step-by-step solutions, or resolve/reply to a ticket.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        action: {
+          type: 'STRING',
+          enum: ['list', 'resolve', 'reply'],
+          description: 'Action: "list" to view tickets with AI suggested solutions, "resolve" to mark ticket as resolved'
+        },
+        status: {
+          type: 'STRING',
+          enum: ['pending', 'resolved', 'all'],
+          description: 'Filter tickets by status ("pending", "resolved", or "all")'
+        },
+        ticketId: {
+          type: 'STRING',
+          description: 'ID of the specific ticket to resolve or reply to'
+        },
+        resolutionMessage: {
+          type: 'STRING',
+          description: 'Resolution note or reply message sent to the ticket creator'
+        }
+      },
+      required: ['action']
+    }
+  },
+  {
+    name: 'admin_manage_content',
+    description: 'ADMIN/SUPERADMIN ONLY: Manage official website content including Announcements (create, edit, delete) and Uploaded Documents (list pending, approve, reject, edit, delete).',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        contentType: {
+          type: 'STRING',
+          enum: ['announcement', 'document'],
+          description: 'Content type to manage: "announcement" or "document"'
+        },
+        action: {
+          type: 'STRING',
+          enum: ['create', 'edit', 'delete', 'list', 'list_pending', 'approve', 'reject'],
+          description: 'Action to perform on content'
+        },
+        id: {
+          type: 'STRING',
+          description: 'Announcement ID or Document ID for edit/delete/approve/reject'
+        },
+        title: {
+          type: 'STRING',
+          description: 'Title of the announcement or document'
+        },
+        content: {
+          type: 'STRING',
+          description: 'Text content of the announcement'
+        },
+        subject: {
+          type: 'STRING',
+          description: 'Subject name for document'
+        },
+        year: {
+          type: 'STRING',
+          description: 'Academic year for document'
+        },
+        docUrl: {
+          type: 'STRING',
+          description: 'Optional document attachment URL'
+        }
+      },
+      required: ['contentType', 'action']
+    }
+  },
+  {
+    name: 'admin_send_user_communication',
+    description: 'ADMIN/SUPERADMIN ONLY: Send an official in-app message (notification) to a specific user according to admin instructions. Note: AI email dispatching is disabled; all messages are delivered directly inside the user app and push notifications.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        targetUserId: {
+          type: 'STRING',
+          description: 'Target user ID or MongoDB ObjectId'
+        },
+        targetEmail: {
+          type: 'STRING',
+          description: 'Target user email address'
+        },
+        message: {
+          type: 'STRING',
+          description: 'Custom message body to deliver to the user'
+        },
+        channel: {
+          type: 'STRING',
+          enum: ['in_app'],
+          description: 'Delivery channel: "in_app" notification'
+        },
+        subject: {
+          type: 'STRING',
+          description: 'Notification subject title'
+        }
+      },
+      required: ['message']
+    }
+  },
+  {
+    name: 'admin_get_site_status_report',
+    description: 'ADMIN/SUPERADMIN ONLY: Generate an executive real-time status and analytics report for StudyMyte, including users, resources, support health, and actionable growth recommendations.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {}
     }
   }
 ];
@@ -538,6 +682,70 @@ async function executeTool(name, args = {}, userContext = null) {
         return { success: true, report: data };
       }
       return { success: false, error: 'Unknown metric type' };
+    }
+
+        case 'admin_manage_users': {
+      if (!userContext || (userContext.role !== 'admin' && userContext.role !== 'superadmin')) {
+        return { success: false, error: 'Access denied: Administrative privileges required.' };
+      }
+      if (args.action === 'get_details') {
+        return await adminSuperpowers.getUserDetails(args.identifier || args.query, userContext);
+      } else if (args.action === 'approve' || args.action === 'disapprove' || args.action === 'delete') {
+        return await adminSuperpowers.updateUserStatus({
+          targetUserId: args.identifier,
+          action: args.action,
+          role: args.role
+        }, userContext);
+      }
+      return await adminSuperpowers.searchUsers({
+        query: args.query,
+        role: args.role,
+        approved: args.approved,
+        limit: 20
+      }, userContext);
+    }
+
+    case 'admin_manage_tickets': {
+      if (!userContext || (userContext.role !== 'admin' && userContext.role !== 'superadmin')) {
+        return { success: false, error: 'Access denied: Administrative privileges required.' };
+      }
+      if (args.action === 'resolve' || args.action === 'reply') {
+        return await adminSuperpowers.resolveOrReplySupportTicket({
+          ticketId: args.ticketId,
+          resolutionMessage: args.resolutionMessage,
+          markResolved: args.action === 'resolve'
+        }, userContext);
+      }
+      return await adminSuperpowers.getAllSupportTickets({
+        status: args.status || 'pending',
+        limit: 20
+      }, userContext);
+    }
+
+    case 'admin_manage_content': {
+      if (!userContext || (userContext.role !== 'admin' && userContext.role !== 'superadmin')) {
+        return { success: false, error: 'Access denied: Administrative privileges required.' };
+      }
+      if (args.contentType === 'announcement') {
+        return await adminSuperpowers.manageAnnouncement(args, userContext);
+      } else if (args.contentType === 'document') {
+        return await adminSuperpowers.manageDocument(args, userContext);
+      }
+      return { success: false, error: 'Invalid content type' };
+    }
+
+    case 'admin_send_user_communication': {
+      if (!userContext || (userContext.role !== 'admin' && userContext.role !== 'superadmin')) {
+        return { success: false, error: 'Access denied: Administrative privileges required.' };
+      }
+      return await adminSuperpowers.sendUserCommunication(args, userContext);
+    }
+
+    case 'admin_get_site_status_report': {
+      if (!userContext || (userContext.role !== 'admin' && userContext.role !== 'superadmin')) {
+        return { success: false, error: 'Access denied: Administrative privileges required.' };
+      }
+      return await adminSuperpowers.generateExecutiveSiteStatusReport(userContext);
     }
 
     default:

@@ -80,6 +80,19 @@ router.post('/chat', optionalAuth, myteeChatLimiter, async (req, res) => {
     });
   }
 
+  // 0. Enforce Authentication: Only logged-in users can access MYTEE AI
+  if (!req.user || !req.user.id) {
+    return res.status(401).json({
+      success: false,
+      requiresLogin: true,
+      reply: '🔒 **Please Log In to Access MYTEE**\n\nMYTEE AI is available exclusively to registered StudyMyte students, educators, and administrators. Please log in or create an account to start asking questions or exploring study resources.',
+      actions: [
+        { label: 'Log In', path: '/login' },
+        { label: 'Register', path: '/register' }
+      ]
+    });
+  }
+
   const activeSessionId = sessionId || `sess_${crypto.randomBytes(12).toString('hex')}`;
   const clientIp = req.ip || req.socket?.remoteAddress || 'Unknown';
   const userRole = req.user ? req.user.role : 'guest';

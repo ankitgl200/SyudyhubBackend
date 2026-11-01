@@ -93,9 +93,20 @@ describe('MYTEE E2E HTTP Endpoints', () => {
     assert.ok(Array.isArray(res.data.routes));
   });
 
-  test('POST /api/mytee/chat handles scope rejection politely', async () => {
+  test('POST /api/mytee/chat rejects unauthenticated users (requires login)', async () => {
+    const res = await makeRequest('POST', '/api/mytee/chat', {
+      message: 'Hello'
+    });
+    assert.equal(res.status, 401);
+    assert.equal(res.data.requiresLogin, true);
+    assert.ok(res.data.reply.includes('Please Log In to Access MYTEE'));
+  });
+
+  test('POST /api/mytee/chat handles scope rejection politely for logged-in user', async () => {
     const res = await makeRequest('POST', '/api/mytee/chat', {
       message: 'Who will win the next political election?'
+    }, {
+      'Authorization': `Bearer ${studentToken}`
     });
     assert.equal(res.status, 200);
     assert.equal(res.data.success, true);
@@ -103,9 +114,11 @@ describe('MYTEE E2E HTTP Endpoints', () => {
     assert.ok(res.data.reply.includes('I am MYTEE, the official AI assistant of StudyMyte'));
   });
 
-  test('POST /api/mytee/chat returns resources for academic queries', async () => {
+  test('POST /api/mytee/chat returns resources for academic queries for logged-in user', async () => {
     const res = await makeRequest('POST', '/api/mytee/chat', {
       message: 'Give me PYQs for 2nd year OOPS'
+    }, {
+      'Authorization': `Bearer ${studentToken}`
     });
     assert.equal(res.status, 200);
     assert.equal(res.data.success, true);

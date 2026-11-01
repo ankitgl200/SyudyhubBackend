@@ -19,9 +19,9 @@ test('Email Service - sendWelcomeEmail parameter validation', async () => {
 });
 
 test('Email Service - sendWelcomeEmail configuration defaults', () => {
-  assert.equal(config.EMAILJS.SERVICE_ID, 'service_k0369d9');
-  assert.equal(config.EMAILJS.WELCOME_TEMPLATE_ID, 'template_4coiqgc');
-  assert.equal(config.EMAILJS.PUBLIC_KEY, 'EADCytMay61qrmUUk');
+  assert.equal(typeof config.EMAILJS.SERVICE_ID, 'string');
+  assert.equal(typeof config.EMAILJS.WELCOME_TEMPLATE_ID, 'string');
+  assert.equal(typeof config.EMAILJS.PUBLIC_KEY, 'string');
 });
 
 test('Email Service - emailjs.send wrapper exists and is callable', () => {

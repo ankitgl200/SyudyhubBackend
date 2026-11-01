@@ -21,10 +21,10 @@ module.exports = {
   },
   UPLOADS_DIR: path.join(__dirname, 'uploads'),
   EMAILJS: {
-    SERVICE_ID: process.env.EMAILJS_SERVICE_ID || 'service_k0369d9',
-    TEMPLATE_ID: process.env.EMAILJS_TEMPLATE_ID || 'template_axrwr8q',
-    WELCOME_TEMPLATE_ID: process.env.EMAILJS_WELCOME_TEMPLATE_ID || 'template_4coiqgc',
-    PUBLIC_KEY: process.env.EMAILJS_PUBLIC_KEY || 'EADCytMay61qrmUUk',
+    SERVICE_ID: process.env.EMAILJS_SERVICE_ID || '',
+    TEMPLATE_ID: process.env.EMAILJS_TEMPLATE_ID || '',
+    WELCOME_TEMPLATE_ID: process.env.EMAILJS_WELCOME_TEMPLATE_ID || '',
+    PUBLIC_KEY: process.env.EMAILJS_PUBLIC_KEY || '',
     PRIVATE_KEY: process.env.EMAILJS_PRIVATE_KEY || '',
     ORIGIN: process.env.EMAILJS_ORIGIN || 'https://studymyte4students.vercel.app'
   },
