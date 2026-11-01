@@ -12,7 +12,9 @@ module.exports = {
                 ? process.env.TRUST_PROXY
                 : parseInt(process.env.TRUST_PROXY, 10))))
     : (process.env.NODE_ENV === 'production' ? 1 : false),
-  JWT_SECRET: process.env.JWT_SECRET || 'studymytesecretkey987654321',
+  JWT_SECRET: process.env.JWT_SECRET || (process.env.NODE_ENV === 'production' 
+    ? (() => { throw new Error('FATAL: JWT_SECRET environment variable is required in production.'); })() 
+    : 'studymyte-dev-secret-key-local-only'),
   MONGODB_URI: process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/studymyte',
   CLOUDINARY: {
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME || '',
@@ -21,10 +23,10 @@ module.exports = {
   },
   UPLOADS_DIR: path.join(__dirname, 'uploads'),
   EMAILJS: {
-    SERVICE_ID: process.env.EMAILJS_SERVICE_ID || 'service_k0369d9',
-    TEMPLATE_ID: process.env.EMAILJS_TEMPLATE_ID || 'template_axrwr8q',
-    WELCOME_TEMPLATE_ID: process.env.EMAILJS_WELCOME_TEMPLATE_ID || 'template_4coiqgc',
-    PUBLIC_KEY: process.env.EMAILJS_PUBLIC_KEY || 'EADCytMay61qrmUUk',
+    SERVICE_ID: process.env.EMAILJS_SERVICE_ID || '',
+    TEMPLATE_ID: process.env.EMAILJS_TEMPLATE_ID || '',
+    WELCOME_TEMPLATE_ID: process.env.EMAILJS_WELCOME_TEMPLATE_ID || '',
+    PUBLIC_KEY: process.env.EMAILJS_PUBLIC_KEY || '',
     PRIVATE_KEY: process.env.EMAILJS_PRIVATE_KEY || '',
     ORIGIN: process.env.EMAILJS_ORIGIN || 'https://studymyte4students.vercel.app'
   },
@@ -53,5 +55,22 @@ module.exports = {
       'http://127.0.0.1:5000',
       'http://127.0.0.1:3000'
     ]
+  },
+  GEMINI: {
+    API_KEY: process.env.GEMINI_API_KEY || '',
+    MODEL: process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
+    TIMEOUT_MS: parseInt(process.env.GEMINI_TIMEOUT_MS, 10) || 30000,
+    MAX_OUTPUT_TOKENS: parseInt(process.env.GEMINI_MAX_OUTPUT_TOKENS, 10) || 1024,
+    TEMPERATURE: parseFloat(process.env.GEMINI_TEMPERATURE) || 0.3
+  },
+  MYTEE: {
+    STUDENT_RATE_LIMIT_MIN: parseInt(process.env.MYTEE_STUDENT_RATE_LIMIT_MIN, 10) || 60,
+    STUDENT_RATE_LIMIT_DAY: parseInt(process.env.MYTEE_STUDENT_RATE_LIMIT_DAY, 10) || 500,
+    GUEST_RATE_LIMIT_MIN: parseInt(process.env.MYTEE_GUEST_RATE_LIMIT_MIN, 10) || 40,
+    GUEST_RATE_LIMIT_DAY: parseInt(process.env.MYTEE_GUEST_RATE_LIMIT_DAY, 10) || 250,
+    TICKET_RATE_LIMIT_HOUR: parseInt(process.env.MYTEE_TICKET_RATE_LIMIT_HOUR, 10) || 10,
+    ADMIN_RATE_LIMIT_MIN: parseInt(process.env.MYTEE_ADMIN_RATE_LIMIT_MIN, 10) || 120,
+    MAX_MESSAGE_LENGTH: parseInt(process.env.MYTEE_MAX_MESSAGE_LENGTH, 10) || 1200,
+    MAX_HISTORY_TURNS: parseInt(process.env.MYTEE_MAX_HISTORY_TURNS, 10) || 10
   }
 };
