@@ -706,46 +706,61 @@ async function analyzeExamQuestions({
 
   // Format Markdown Response for MYTEE
   let text = `🎯 **Smart PYQ Exam Analyzer — ${canonicalSubject}**\n\n`;
-  text += `> 📊 **Analysis Scope**: Evaluated past **${paperCount} university examination papers** (${yearsRepresented}). Filtered for questions with **$\ge${minFreq}\\%$ recurrence frequency** in BTKIT / UTU semester examinations.\n\n`;
+  text += `> 📊 **Analysis Scope**: Evaluated past **${paperCount} university examination papers** (${yearsRepresented}). Identified questions with **≥${minFreq}% recurrence frequency** in BTKIT / UTU semester examinations.\n\n`;
 
-  // Tier 1 Section
+  // Quick-Scan Leaderboard Table
+  if (filteredTopics.length > 0) {
+    text += `### 📋 High-Yield Recurrence Leaderboard\n\n`;
+    text += `| Rank | High-Yield Topic | Recurrence | Weightage | Unit |\n`;
+    text += `| :---: | :--- | :---: | :---: | :--- |\n`;
+    filteredTopics.forEach((item, index) => {
+      const medal = index === 0 ? '🥇 #1' : (index === 1 ? '🥈 #2' : (index === 2 ? '🥉 #3' : `⚡ #${index + 1}`));
+      const marksShort = item.typicalMarks.replace(' Marks', 'M');
+      const unitShort = item.unit.split(':')[0] || item.unit;
+      text += `| ${medal} | **${item.topic}** | **${item.repeatFrequencyPercent}%** | ${marksShort} | ${unitShort} |\n`;
+    });
+    text += `\n---\n\n`;
+  }
+
+  // Tier 1 Section (Super High: >=75%)
   if (tier1SuperHigh.length > 0) {
-    text += `### 🔥 Tier 1: Super High-Yield Questions ($\ge 75\\%$ Repeat Probability)\n`;
-    text += `*These questions appear almost every academic session. Mastering them guarantees strong baseline passing and distinction marks.* \n\n`;
+    text += `### 🔥 Tier 1: Super High-Yield Questions (≥75% Repeat Probability)\n`;
+    text += `*Mastering these questions guarantees solid baseline passing and distinction marks.* \n\n`;
 
     tier1SuperHigh.forEach((item, index) => {
-      text += `#### **Q${index + 1}. [${item.repeatFrequencyPercent}% Frequency] ${item.topic}**\n`;
-      text += `* **Marks & Unit**: ${item.typicalMarks} | *${item.unit}*\n`;
-      text += `* **Years Appeared**: ${item.yearsAppeared.join(', ')}\n`;
-      text += `* **Exam Question**: \n> *"${item.question}"*\n\n`;
+      text += `### 🥇 Q${index + 1}. ${item.topic}\n`;
+      text += `\`🔥 ${item.repeatFrequencyPercent}% Frequency\` · \`🎯 ${item.typicalMarks}\` · \`📦 ${item.unit}\` · \`📅 Appeared in: ${item.yearsAppeared.join(', ')}\`\n\n`;
+      text += `> ❓ **University Exam Question:**\n`;
+      text += `> *"${item.question}"*\n\n`;
 
       if (includeAnswers && item.modelAnswer && item.modelAnswer.length > 0) {
-        text += `* **📝 Model Answer & Key Scoring Points**:\n`;
+        text += `#### 📝 Master Model Answer & Scoring Points:\n`;
         item.modelAnswer.forEach(pt => {
-          text += `  ${pt}\n`;
+          text += `${pt}\n`;
         });
-        text += `\n`;
+        text += `\n---\n\n`;
       }
     });
   }
 
-  // Tier 2 Section
+  // Tier 2 Section (High: 60-74%)
   if (tier2High.length > 0) {
     text += `### ⚡ Tier 2: High-Yield Questions (60% – 74% Repeat Probability)\n`;
-    text += `*Frequently rotated in alternate years or offered as internal choice questions.* \n\n`;
+    text += `*Frequently rotated in alternate years or offered as major choice questions.* \n\n`;
 
     tier2High.forEach((item, index) => {
-      text += `#### **Q${tier1SuperHigh.length + index + 1}. [${item.repeatFrequencyPercent}% Frequency] ${item.topic}**\n`;
-      text += `* **Marks & Unit**: ${item.typicalMarks} | *${item.unit}*\n`;
-      text += `* **Years Appeared**: ${item.yearsAppeared.join(', ')}\n`;
-      text += `* **Exam Question**: \n> *"${item.question}"*\n\n`;
+      const qNum = tier1SuperHigh.length + index + 1;
+      text += `### ⚡ Q${qNum}. ${item.topic}\n`;
+      text += `\`⚡ ${item.repeatFrequencyPercent}% Frequency\` · \`🎯 ${item.typicalMarks}\` · \`📦 ${item.unit}\` · \`📅 Appeared in: ${item.yearsAppeared.join(', ')}\`\n\n`;
+      text += `> ❓ **University Exam Question:**\n`;
+      text += `> *"${item.question}"*\n\n`;
 
       if (includeAnswers && item.modelAnswer && item.modelAnswer.length > 0) {
-        text += `* **📝 Model Answer & Key Scoring Points**:\n`;
+        text += `#### 📝 Master Model Answer & Scoring Points:\n`;
         item.modelAnswer.forEach(pt => {
-          text += `  ${pt}\n`;
+          text += `${pt}\n`;
         });
-        text += `\n`;
+        text += `\n---\n\n`;
       }
     });
   }
