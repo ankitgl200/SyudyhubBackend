@@ -1,0 +1,202 @@
+const express = require('express');
+const cors = require('cors');
+const path = require('path');
+const fs = require('fs');
+const bcrypt = require('bcryptjs');
+const mongoose = require('mongoose');
+const config = require('./config');
+const { securityHeaders, strictCors } = require('./middleware/security');
+
+const app = express();
+
+// Express trust proxy configuration based on verified topology
+// Only trust proxy hops configured via environment (Render/Vercel reverse proxy)
+if (config.TRUST_PROXY !== false && config.TRUST_PROXY !== undefined) {
+  app.set('trust proxy', config.TRUST_PROXY);
+}
+
+// Apply Security Headers & Strict CORS
+app.use(securityHeaders);
+app.use(strictCors);
+
+// Body parser with size limits
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+
+// Ensure public/uploads directory exists
+const UPLOADS_DIR = config.UPLOADS_DIR;
+if (!fs.existsSync(UPLOADS_DIR)) {
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+
+// Serve static uploads
+app.use('/uploads', express.static(UPLOADS_DIR));
+
+// Serve frontend static folder if it exists (allows local integrated testing)
+const frontendPath = path.join(__dirname, '..', 'frontend');
+const publicPath = path.join(__dirname, 'public');
+const targetStaticPath = fs.existsSync(frontendPath) ? frontendPath : (fs.existsSync(publicPath) ? publicPath : null);
+
+if (targetStaticPath) {
+  app.use(express.static(targetStaticPath));
+}
+
+// Health Check Route
+app.get("/health", (req, res) => {
+res.status(200).json({
+success: true,
+message: "Server is healthy",
+timestamp: new Date().toISOString(),
+});
+});
+
+// Import routes
+const authRoutes = require('./routes/auth');
+const folderRoutes = require('./routes/folders');
+const documentRoutes = require('./routes/documents');
+const announcementRoutes = require('./routes/announcements');
+const helpRoutes = require('./routes/help');
+const notificationRoutes = require('./routes/notifications');
+const reviewRoutes = require('./routes/reviews');
+const teamRoutes = require('./routes/team');
+const settingsRoutes = require('./routes/settings');
+const myteeRoutes = require('./routes/mytee');
+
+// Mount API routes
+app.use('/api/auth', authRoutes);
+app.use('/api/folders', folderRoutes);
+app.use('/api/documents', documentRoutes);
+app.use('/api/announcements', announcementRoutes);
+app.use('/api/help', helpRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/reviews', reviewRoutes);
+app.use('/api/team', teamRoutes);
+app.use('/api/settings', settingsRoutes);
+app.use('/api/mytee', myteeRoutes);
+app.use('/api/sonic', myteeRoutes);
+
+// Seed default data using Mongoose
+async function seedDefaultData() {
+  try {
+    const { User, Folder, MessageTemplate } = require('./db/models');
+
+    // (Super Admin and user accounts are created through secure registration)
+
+    // 3. Seed default subject folders if empty
+    // Notes folders
+    const notesFoldersCount = await Folder.countDocuments({ type: 'notes' });
+    if (notesFoldersCount === 0) {
+      const defaultNotes = [
+        'Engineering Mathematics',
+        'Engineering Physics',
+        'Computer Programming',
+        'Data Structures'
+      ];
+      await Folder.insertMany(defaultNotes.map(name => ({ name, type: 'notes', parentId: null })));
+      console.log('Seeded default Notes folders');
+    }
+
+    // Papers folders
+    const papersFoldersCount = await Folder.countDocuments({ type: 'papers' });
+    if (papersFoldersCount === 0) {
+      const defaultPapers = [
+        'Mathematics PYQs',
+        'Physics PYQs',
+        'Chemistry PYQs',
+        'Computer Science PYQs'
+      ];
+      await Folder.insertMany(defaultPapers.map(name => ({ name, type: 'papers', parentId: null })));
+      console.log('Seeded default Papers folders');
+    }
+
+    // Lab Manual folders
+    const labFoldersCount = await Folder.countDocuments({ type: 'lab_manuals' });
+    if (labFoldersCount === 0) {
+      const defaultLabs = [
+        'Basic Programming Lab',
+        'Physics Practical Lab',
+        'Data Structures Lab'
+      ];
+      await Folder.insertMany(defaultLabs.map(name => ({ name, type: 'lab_manuals', parentId: null })));
+      console.log('Seeded default Lab Manual folders');
+    }
+
+    // Books folders
+    const bookFoldersCount = await Folder.countDocuments({ type: 'books' });
+    if (bookFoldersCount === 0) {
+      const defaultBooks = [
+        'Calculus & Algebra',
+        'Programming in C',
+        'Introduction to Algorithms'
+      ];
+      await Folder.insertMany(defaultBooks.map(name => ({ name, type: 'books', parentId: null })));
+      console.log('Seeded default Book folders');
+    }
+
+    // Simulation folders (and migrate legacy roadmap entries)
+    const { Document } = require('./db/models');
+    await Folder.updateMany({ type: 'roadmaps' }, { $set: { type: 'simulations' } });
+    await Document.updateMany({ type: 'roadmap' }, { $set: { type: 'simulation' } });
+
+    const simulationFoldersCount = await Folder.countDocuments({ type: { $in: ['simulations', 'roadmaps'] } });
+    if (simulationFoldersCount === 0) {
+      const defaultSimulations = [
+        'Computer Science Simulations',
+        'Electronics & Circuit Simulations',
+        'Mechanical & Physics Simulations'
+      ];
+      await Folder.insertMany(defaultSimulations.map(name => ({ name, type: 'simulations', parentId: null })));
+      console.log('Seeded default Simulation folders');
+    }
+
+    // 4. Seed default message templates
+    const templatesCount = await MessageTemplate.countDocuments();
+    if (templatesCount === 0) {
+      const defaultTemplates = [
+        {
+          name: 'Welcome Educator',
+          content: 'Dear Sir/Ma’am,\n\nWe warmly welcome you to our platform as an educator and sincerely thank you for joining us. Your presence and experience will greatly benefit our student community.\n\nWe kindly request you to upload any resources you have, such as notes, previous year questions, or lab manuals, which can help students in their learning journey.\n\nIn case you face any issues while using the platform or otherwise, please feel free to use the Help & Support page—we are always here to assist you.\n\nThank you once again for being a valuable part of our initiative.'
+        },
+        {
+          name: 'Request Upload',
+          content: 'Dear Student/Educator,\n\nWe noticed that some resources (notes, PYQs, or lab manuals) for your department/year are currently missing. If you have access to these materials, we kindly request you to upload them to the portal to assist other learners.\n\nThank you for your cooperation!'
+        }
+      ];
+      await MessageTemplate.insertMany(defaultTemplates);
+      console.log('Seeded default message templates');
+    }
+
+  } catch (err) {
+    console.error('Error during data seeding:', err.message);
+  }
+}
+
+// SPA routing fallback - serve index.html for non-API requests
+if (targetStaticPath) {
+  app.get(/^(?!\/api|\/uploads).*/, (req, res) => {
+    res.sendFile(path.join(targetStaticPath, 'index.html'));
+  });
+}
+
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ message: 'Internal Server Error' });
+});
+
+// Connect to MongoDB & Start Server
+mongoose.connect(config.MONGODB_URI)
+  .then(async () => {
+    console.log('Connected to MongoDB successfully.');
+    await seedDefaultData();
+    
+    const PORT = config.PORT;
+    app.listen(PORT, () => {
+      console.log(`StudyMyte Server running on port ${PORT}`);
+    });
+  })
+  .catch(err => {
+    console.error('Database connection failed:', err.message);
+    process.exit(1);
+  });
+

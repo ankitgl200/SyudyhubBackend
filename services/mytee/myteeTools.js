@@ -1,0 +1,552 @@
+/**
+ * MYTEE Function Calling Tool Declarations & Dispatcher
+ * Predefines authorized StudyMyte tools and executes them under strict access control.
+ */
+
+const { searchResources } = require('./resourceSearchService');
+const { getOfficialWebsiteInfo, findNavigationRoute, getTroubleshootingGuide } = require('./websiteKnowledgeService');
+const { createSupportTicket, getUserTickets } = require('./supportTicketService');
+const { getWebsiteOverview, getUserActivityAnalytics, getAiUsageAnalytics, generateAdminReport } = require('./adminAnalyticsService');
+const { initiatePasswordReset, verifyResetOtp, completePasswordResetForUser } = require('./inChatAuthService');
+const { User, Document, Announcement } = require('../../db/models');
+
+// Tool definitions for Google Gemini API Function Calling
+const TOOL_DEFINITIONS = [
+  {
+    name: 'set_website_theme',
+    description: 'Switch website display theme between dark mode and light mode for the user.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        mode: {
+          type: 'STRING',
+          enum: ['dark', 'light'],
+          description: 'The display mode to apply ("dark" or "light")'
+        }
+      },
+      required: ['mode']
+    }
+  },
+  {
+    name: 'set_website_font',
+    description: 'Change the website typography font to one of the 10 available fonts, or ask user to choose from available fonts.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        fontId: {
+          type: 'STRING',
+          enum: ['inter', 'outfit', 'jakarta', 'poppins', 'roboto', 'nunito', 'lexend', 'space', 'lora', 'dmsans'],
+          description: 'The font identifier to apply (e.g. "outfit", "lexend", "poppins")'
+        }
+      }
+    }
+  },
+  {
+    name: 'open_website_page',
+    description: 'Control website navigation by opening a section or page directly (e.g. notes, papers, pyqs, resources, profile, settings, support, about, uploads, home) without reloading or opening a new tab.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        page: {
+          type: 'STRING',
+          description: 'The target page name or route to open (e.g. "notes", "papers", "pyqs", "resources", "profile", "settings", "support", "about", "uploads", "home")'
+        }
+      },
+      required: ['page']
+    }
+  },
+  {
+    name: 'get_my_profile_and_uploads',
+    description: 'Retrieve the authenticated logged-in user personal profile information (name, email, phone number, role) and their latest 5 upload history records (status, title, type, date).',
+    parameters: {
+      type: 'OBJECT',
+      properties: {}
+    }
+  },
+  {
+    name: 'get_latest_announcements',
+    description: 'Fetch the latest official announcements (all up to 10 latest notices) from StudyMyte to summarize them or explain specific ones.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        announcementId: {
+          type: 'STRING',
+          description: 'Optional ID of a specific announcement to explain in detail'
+        },
+        topic: {
+          type: 'STRING',
+          description: 'Optional topic or keyword to find relevant announcements'
+        }
+      }
+    }
+  },
+  {
+    name: 'request_password_reset_otp',
+    description: 'Send a 6-digit email verification code to the authenticated logged-in user to initiate a password reset in chat.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {}
+    }
+  },
+  {
+    name: 'verify_password_reset_otp',
+    description: 'Verify the 6-digit code sent to the authenticated user for in-chat password reset.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        otp: {
+          type: 'STRING',
+          description: 'The 6-digit numeric verification code entered by the user'
+        },
+        verificationId: {
+          type: 'STRING',
+          description: 'Optional verification session ID'
+        }
+      },
+      required: ['otp']
+    }
+  },
+  {
+    name: 'set_new_account_password',
+    description: 'Update the authenticated user account password to newPassword after their OTP code has been verified.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        newPassword: {
+          type: 'STRING',
+          description: 'The new password chosen by the user (minimum 6 characters)'
+        }
+      },
+      required: ['newPassword']
+    }
+  },
+  {
+    name: 'search_resources',
+    description: 'Search approved educational resources on StudyMyte including lecture notes, previous-year question papers (PYQs), lab manuals, and textbooks.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        query: {
+          type: 'STRING',
+          description: 'The natural-language search query, e.g. "PYQs for 2nd year OOPS" or "Engineering Physics notes"'
+        },
+        type: {
+          type: 'STRING',
+          description: 'Resource category: "paper", "notes", "lab_manual", or "book"',
+          enum: ['paper', 'notes', 'lab_manual', 'book']
+        },
+        subject: {
+          type: 'STRING',
+          description: 'Standardized subject name (e.g. "Object Oriented Programming", "Engineering Mathematics")'
+        },
+        year: {
+          type: 'STRING',
+          description: 'Academic year ("1st Year", "2nd Year", "3rd Year", "4th Year") or calendar exam year ("2024", "2023")'
+        }
+      },
+      required: ['query']
+    }
+  },
+  {
+    name: 'get_official_website_info',
+    description: 'Get verified official information regarding StudyMyte, its founders/creators, purpose, contact emails, phone numbers, and official policies.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {}
+    }
+  },
+  {
+    name: 'get_navigation_route',
+    description: 'Retrieve verified website navigation routes and links for platform pages (Notes, PYQs, Support, Profile, Uploads, etc.).',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        sectionName: {
+          type: 'STRING',
+          description: 'Name of the website section or page the user wishes to visit (e.g. "papers", "notes", "support", "about")'
+        }
+      },
+      required: ['sectionName']
+    }
+  },
+  {
+    name: 'troubleshoot_platform_issue',
+    description: 'Retrieve official verified troubleshooting steps for website problems such as PDF viewing, login failures, or file uploads.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        issueCategory: {
+          type: 'STRING',
+          description: 'Category of the technical issue: "pdf_view", "login_issue", "upload_issue", or "profile_issue"',
+          enum: ['pdf_view', 'login_issue', 'upload_issue', 'profile_issue']
+        }
+      },
+      required: ['issueCategory']
+    }
+  },
+  {
+    name: 'create_support_ticket',
+    description: 'Create an official support ticket when an issue requires human review or when the user requests technical escalation.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        category: {
+          type: 'STRING',
+          description: 'Category of support: "Login & Registration", "Resource Download", "PDF Opening", "Upload Issues", "Website Bugs", or "Other"'
+        },
+        subject: {
+          type: 'STRING',
+          description: 'Short summary of the user problem'
+        },
+        description: {
+          type: 'STRING',
+          description: 'Detailed explanation of the issue and what user was trying to do'
+        },
+        errorMessage: {
+          type: 'STRING',
+          description: 'Specific error message displayed on screen, if any'
+        },
+        affectedSection: {
+          type: 'STRING',
+          description: 'Website section or page where issue occurred (e.g. "/papers", "/login")'
+        },
+        priority: {
+          type: 'STRING',
+          enum: ['low', 'medium', 'high'],
+          description: 'Urgency of the issue'
+        }
+      },
+      required: ['subject', 'description']
+    }
+  },
+  {
+    name: 'get_my_support_tickets',
+    description: 'Retrieve recent support tickets created by the logged-in user to check their status.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {}
+    }
+  },
+  {
+    name: 'get_admin_analytics',
+    description: 'ADMINISTRATOR ONLY: Query verified platform analytics, active users, resource distribution, support health, or natural-language reports.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        metricType: {
+          type: 'STRING',
+          enum: ['overview', 'users', 'ai_health', 'report'],
+          description: 'Type of administrative metric requested'
+        },
+        question: {
+          type: 'STRING',
+          description: 'Specific question asked by administrator, e.g. "How many users joined this week?"'
+        }
+      },
+      required: ['metricType']
+    }
+  }
+];
+
+/**
+ * Executes a tool function securely with access-control enforcement.
+ * 
+ * @param {string} name - Tool name
+ * @param {Object} args - Arguments supplied by model or orchestrator
+ * @param {Object} userContext - Logged in user info
+ */
+async function executeTool(name, args = {}, userContext = null) {
+  switch (name) {
+    case 'open_website_page': {
+      const raw = (args.page || '').trim().toLowerCase();
+      const pageMap = {
+        notes: { path: '/notes', label: 'Lecture Notes' },
+        note: { path: '/notes', label: 'Lecture Notes' },
+        papers: { path: '/papers', label: 'Previous Year Papers (PYQs)' },
+        paper: { path: '/papers', label: 'Previous Year Papers (PYQs)' },
+        pyq: { path: '/papers', label: 'Previous Year Papers (PYQs)' },
+        pyqs: { path: '/papers', label: 'Previous Year Papers (PYQs)' },
+        resources: { path: '/resources', label: 'Academic Resources' },
+        resource: { path: '/resources', label: 'Academic Resources' },
+        books: { path: '/resources', label: 'Academic Resources' },
+        book: { path: '/resources', label: 'Academic Resources' },
+        profile: { path: '/profile', label: 'Profile Settings', requiresAuth: true },
+        settings: { path: '/profile', label: 'Profile Settings', requiresAuth: true },
+        reset_password: { path: '/profile', label: 'Password Reset & Profile', requiresAuth: true },
+        password: { path: '/profile', label: 'Password Settings', requiresAuth: true },
+        forgot_password: { path: '/forgot-password', label: 'Forgot Password Portal' },
+        login: { path: '/login', label: 'Login Page' },
+        signup: { path: '/signup', label: 'Create Account' },
+        uploads: { path: '/uploads', label: 'My Uploads', requiresAuth: true },
+        contributions: { path: '/my-contributions', label: 'My Contributions', requiresAuth: true },
+        upload: { path: '/my-contributions', label: 'Contribute Notes' },
+        support: { path: '/support', label: 'Help & Support' },
+        help: { path: '/support', label: 'Help & Support' },
+        about: { path: '/about', label: 'About StudyMyte' },
+        home: { path: '/', label: 'StudyMyte Home' }
+      };
+
+      const cleanKey = raw.replace(/^(\/|#\/|#)/, '').replace(/[-_]/g, '');
+      let matched = null;
+      for (const [key, item] of Object.entries(pageMap)) {
+        if (key === raw || key === cleanKey || raw.includes(key)) {
+          matched = item;
+          break;
+        }
+      }
+
+      if (!matched) {
+        matched = { path: '/' + cleanKey, label: args.page || 'Page' };
+      }
+
+      if (matched.requiresAuth && (!userContext || !userContext.id)) {
+        return {
+          success: false,
+          requiresAuth: true,
+          clientAction: { type: 'navigate', path: '/login' },
+          targetPath: '/login',
+          message: 'Authentication required: Please log in to access ' + matched.label + '. Opening Login page.'
+        };
+      }
+
+      return {
+        success: true,
+        clientAction: { type: 'navigate', path: matched.path },
+        targetPath: matched.path,
+        label: matched.label,
+        message: 'Navigating directly to ' + matched.label + ' (' + matched.path + ').'
+      };
+    }
+
+    case 'set_website_theme': {
+      const mode = (args.mode || 'dark').toLowerCase() === 'light' ? 'light' : 'dark';
+      return {
+        success: true,
+        clientAction: { type: 'set_theme', value: mode },
+        mode,
+        message: `Website theme switched to ${mode} mode.`
+      };
+    }
+
+    case 'set_website_font': {
+      const validFonts = {
+        inter: 'Inter (Clean & Modern)',
+        outfit: 'Outfit (Trendy & Geometric)',
+        jakarta: 'Plus Jakarta Sans (Sleek & Professional)',
+        poppins: 'Poppins (Friendly & Rounded)',
+        roboto: 'Roboto (Classic Legibility)',
+        nunito: 'Nunito (Soft & Approachable)',
+        lexend: 'Lexend (Optimized for Reading)',
+        space: 'Space Grotesk (Tech & Expressive)',
+        lora: 'Lora (Elegant Serif)',
+        dmsans: 'DM Sans (Minimalist & Crisp)'
+      };
+
+      if (args.fontId && validFonts[args.fontId.toLowerCase()]) {
+        const key = args.fontId.toLowerCase();
+        return {
+          success: true,
+          clientAction: { type: 'set_font', value: key },
+          fontId: key,
+          fontName: validFonts[key],
+          message: `Website font applied: ${validFonts[key]}.`
+        };
+      }
+
+      return {
+        success: true,
+        requiresChoice: true,
+        availableFonts: Object.entries(validFonts).map(([id, name]) => ({ id, name })),
+        message: 'Please choose one of the available typography fonts.'
+      };
+    }
+
+    case 'get_my_profile_and_uploads': {
+      if (!userContext || !userContext.id) {
+        return {
+          success: false,
+          requiresLogin: true,
+          message: 'You must be logged in to view your profile details and upload history.'
+        };
+      }
+
+      const user = await User.findById(userContext.id).select('name email phone role username createdAt');
+      if (!user) {
+        return { success: false, message: 'User account not found.' };
+      }
+
+      const uploads = await Document.find({ uploadedByUserId: userContext.id })
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .select('title type subject year status createdAt');
+
+      return {
+        success: true,
+        profile: {
+          name: user.name,
+          email: user.email,
+          phone: user.phone || 'Not provided',
+          role: user.role,
+          username: user.username,
+          memberSince: user.createdAt
+        },
+        recentUploads: uploads.map(u => ({
+          id: u._id,
+          title: u.title,
+          type: u.type,
+          subject: u.subject,
+          year: u.year,
+          status: u.status || 'approved',
+          uploadedAt: u.createdAt
+        }))
+      };
+    }
+
+    case 'get_latest_announcements': {
+      let query = {};
+      if (args.announcementId) {
+        const item = await Announcement.findById(args.announcementId);
+        return {
+          success: true,
+          count: item ? 1 : 0,
+          announcements: item ? [{ id: item._id, title: item.title, content: item.content, date: item.createdAt }] : []
+        };
+      }
+
+      if (args.topic) {
+        query.title = { $regex: args.topic, $options: 'i' };
+      }
+
+      const list = await Announcement.find(query).sort({ createdAt: -1 }).limit(10);
+      return {
+        success: true,
+        count: list.length,
+        announcements: list.map(a => ({
+          id: a._id,
+          title: a.title,
+          content: a.content,
+          date: a.createdAt
+        }))
+      };
+    }
+    case 'search_resources': {
+      return await searchResources(args, userContext);
+    }
+
+    case 'get_official_website_info': {
+      const info = await getOfficialWebsiteInfo();
+      return { success: true, websiteInfo: info };
+    }
+
+    case 'get_navigation_route': {
+      const route = findNavigationRoute(args.sectionName);
+      if (!route) {
+        return {
+          found: false,
+          message: `No specific page found for "${args.sectionName}".`,
+          suggestedRoutes: [
+            { path: '/notes', label: 'Notes' },
+            { path: '/papers', label: 'PYQs' },
+            { path: '/resources', label: 'Resources' }
+          ]
+        };
+      }
+      return { found: true, route };
+    }
+
+    case 'troubleshoot_platform_issue': {
+      const guide = getTroubleshootingGuide(args.issueCategory);
+      if (!guide) {
+        return {
+          found: false,
+          message: 'General troubleshooting: Clear browser cookies, disable aggressive ad-blockers, and reload the application.'
+        };
+      }
+      return { found: true, guide };
+    }
+
+    case 'create_support_ticket': {
+      const ticketResult = await createSupportTicket(args, userContext);
+      return ticketResult;
+    }
+
+    case 'get_my_support_tickets': {
+      if (!userContext || !userContext.id) {
+        return {
+          success: false,
+          message: 'You need to be logged in to view your submitted support tickets.'
+        };
+      }
+      const tickets = await getUserTickets(userContext.id);
+      return { success: true, count: tickets.length, tickets };
+    }
+
+    case 'request_password_reset_otp': {
+      if (!userContext || !userContext.id) {
+        return {
+          success: false,
+          requiresLogin: true,
+          message: 'You must be logged in to your StudyMyte account to reset your password.'
+        };
+      }
+      return await initiatePasswordReset(userContext);
+    }
+
+    case 'verify_password_reset_otp': {
+      if (!userContext || !userContext.id) {
+        return {
+          success: false,
+          requiresLogin: true,
+          message: 'You must be logged in to verify the code.'
+        };
+      }
+      return await verifyResetOtp(args.verificationId, args.otp, userContext);
+    }
+
+    case 'set_new_account_password': {
+      if (!userContext || !userContext.id) {
+        return {
+          success: false,
+          requiresLogin: true,
+          message: 'You must be logged in to update your password.'
+        };
+      }
+      return await completePasswordResetForUser(userContext.id, args.newPassword);
+    }
+
+    case 'get_admin_analytics': {
+      // STRICT ROLE ENFORCEMENT
+      if (!userContext || (userContext.role !== 'admin' && userContext.role !== 'superadmin')) {
+        return {
+          success: false,
+          error: 'Access denied: Administrative privileges required to access analytics.'
+        };
+      }
+
+      const metric = args.metricType || 'overview';
+      if (metric === 'overview') {
+        const data = await getWebsiteOverview(userContext);
+        return { success: true, overview: data };
+      } else if (metric === 'users') {
+        const data = await getUserActivityAnalytics(userContext);
+        return { success: true, userStats: data };
+      } else if (metric === 'ai_health') {
+        const data = await getAiUsageAnalytics(userContext);
+        return { success: true, aiStats: data };
+      } else if (metric === 'report') {
+        const data = await generateAdminReport(args.question, userContext);
+        return { success: true, report: data };
+      }
+      return { success: false, error: 'Unknown metric type' };
+    }
+
+    default:
+      throw new Error(`Unauthorized or unknown tool: ${name}`);
+  }
+}
+
+module.exports = {
+  TOOL_DEFINITIONS,
+  executeTool
+};
+
