@@ -5,10 +5,11 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test_duplicate_paper_security.js test_document_security.js test_rate_limit_security.js test_welcome_email.js test_user_export.js",
+    "test": "node --test test_duplicate_paper_security.js test_document_security.js test_rate_limit_security.js test_welcome_email.js test_user_export.js test_mytee.js test_mytee_e2e.js",
     "migrate:duplicates": "node scripts/migrate_paper_duplicates.js"
   },
   "dependencies": {
+    "@google/genai": "^2.32.0",
     "bcryptjs": "^2.4.3",
     "cloudinary": "^2.2.0",
     "cors": "^2.8.5",

@@ -135,9 +135,9 @@ const emailjs = {
 
 /**
  * Send a welcome email to newly registered users.
- * Dispatches via EmailJS REST API:
- * service: config.EMAILJS.SERVICE_ID ("service_k0369d9")
- * template: config.EMAILJS.WELCOME_TEMPLATE_ID ("template_4coiqgc")
+ * Dispatches via EmailJS REST API
+ * Using configured EmailJS service ID
+ * and welcome email template ID
  * params: { name: username, email: user-email }
  *
  * @param {Object} params
@@ -153,8 +153,8 @@ async function sendWelcomeEmail({ email, name }) {
   const cleanEmail = email.trim().toLowerCase();
   const displayName = name ? name.trim() : 'StudyMyte Student';
 
-  const serviceId = config.EMAILJS.SERVICE_ID || 'service_k0369d9';
-  const templateId = config.EMAILJS.WELCOME_TEMPLATE_ID || 'template_4coiqgc';
+  const serviceId = config.EMAILJS.SERVICE_ID;
+  const templateId = config.EMAILJS.WELCOME_TEMPLATE_ID;
 
   try {
     const result = await emailjs.send(serviceId, templateId, {

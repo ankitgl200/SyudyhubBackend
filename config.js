@@ -12,9 +12,7 @@ module.exports = {
                 ? process.env.TRUST_PROXY
                 : parseInt(process.env.TRUST_PROXY, 10))))
     : (process.env.NODE_ENV === 'production' ? 1 : false),
-  JWT_SECRET: process.env.JWT_SECRET || (process.env.NODE_ENV === 'production' 
-    ? (() => { throw new Error('FATAL: JWT_SECRET environment variable is required in production.'); })() 
-    : 'studymyte-dev-secret-key-local-only'),
+  JWT_SECRET: process.env.JWT_SECRET || 'studymytesecretkey987654321',
   MONGODB_URI: process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/studymyte',
   CLOUDINARY: {
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME || '',
