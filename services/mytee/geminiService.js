@@ -15,6 +15,7 @@ const { initiatePasswordReset, verifyResetOtp, completePasswordResetForUser } = 
 const { OtpVerification, User, Document, Announcement } = require('../../db/models');
 const { handleFunQuery } = require('./funPersonalityService');
 const adminSuperpowers = require('./adminSuperpowersService');
+const { analyzeExamQuestions } = require('./smartExamAnalyzerService');
 
 const SYSTEM_INSTRUCTION = `
 You are MYTEE, the official intelligent AI assistant of StudyMyte (https://studymyte.tech/#/).
@@ -82,6 +83,12 @@ CORE PLATFORM RULES:
    • Official GitHub: https://github.com/ankitgl200/studyhubStudents
    • Official Support Emails: support@studymyte.tech or studyhub.btkit@gmail.com
    • CRITICAL WEBSITE ROUTING RULE: StudyMyte is a single-page app utilizing hash-based routing (#/). All website section links MUST use the hash prefix after the domain (e.g., https://studymyte.tech/#/support, https://studymyte.tech/#/notes, https://studymyte.tech/#/papers, https://studymyte.tech/#/resources, https://studymyte.tech/#/about, https://studymyte.tech/#/reviews). NEVER generate links like https://studymyte.tech/support without the '#/'.
+
+4. SMART EXAM ANALYZER (PYQ REPETITION & HIGH-YIELD TOPICS):
+   • When a student asks for "important questions", "important topics", "predict questions", "repeated questions", "high weightage topics", or "what questions come 60-70%+ in exam" for any engineering subject:
+   • You MUST call the analyze_exam_questions tool with the subject parameter!
+   • Present the recurring questions clearly, divided into Tier 1 (Super High: ≥75% frequency) and Tier 2 (High: 60-74% frequency).
+   • Provide the full step-by-step model answers, scoring tips, and direct links to verified StudyMyte PYQ documents.
    • STRICT AVAILABILITY RULE: StudyMyte is ONLY available on Instagram, Telegram, and GitHub. On ANY OTHER platform (LinkedIn, Twitter/X, Discord, Facebook, WhatsApp, etc.), we are NOT available. If a user asks for links to any other platform, you MUST clearly state that StudyMyte is not available on that specific platform, and offer the valid channels.
 4. RESOURCE SEARCH & INBUILT VIEWER: When a user asks for study material (e.g. "PYQs for 2nd year OOPS"), call search_resources. Format your response clearly. In StudyMyte, all documents can be viewed directly using the inbuilt view panel without downloading! Never tell users to download files.
 5. SITE OVERVIEW: When asked for a site overview or summary of StudyMyte, provide a rich, structured summary of StudyMyte's purpose, its core libraries (Notes, PYQs, Lab Manuals), its inbuilt PDF viewer, contribution workflow, and community features.
@@ -982,6 +989,50 @@ ${u.recentUploads.length > 0 ? `#### 📤 Recent Uploads by ${u.name}:\n` + u.re
     toolsUsed.push('get_navigation_route');
     text = `Here is the link to the **${route.label}** page (${route.description}):`;
     actions.push({ label: `Go to ${route.label}`, path: route.path });
+    return { text, resources, actions, ticket, toolsUsed, fallback: true };
+  }
+
+  // 10.5 Smart Exam Paper Analyzer (Important Questions & Repeated Topics 60-70%+)
+  const isAnalyzerQuery = /(important|repeat|repeated|frequent|recurring|frequently\s+asked|predict|high\s+weightage|most\s+asked|60%|70%)\s*(questions?|topics?|concepts?|pyqs?|papers?)/i.test(clean) ||
+    /(what|which)\s+(questions?|topics?)\s+(?:come|appear|repeat|are\s+asked|frequently\s+asked)\s+(?:in\s+exam|most|in\s+pyqs?)/i.test(clean) ||
+    /(?:important|repeated)\s+questions?\s+(?:for|in|of)\s+([a-zA-Z0-9\s+]+)/i.test(clean) ||
+    /analyze\s+(?:the\s+)?(?:papers?|pyqs?|exam)\s+(?:for|of|in)\s+([a-zA-Z0-9\s+]+)/i.test(clean);
+
+  if (isAnalyzerQuery) {
+    let targetSubject = '';
+    const subjectPrefixMatch = clean.match(/(?:for|in|of)\s+([a-zA-Z0-9\s+]+?)(?:\s+(?:exam|paper|semester|subject|topics?|questions?)|$)/i);
+    if (subjectPrefixMatch) {
+      targetSubject = subjectPrefixMatch[1].trim();
+    } else {
+      const knownKeys = ['operating systems', 'os', 'dbms', 'database', 'dsa', 'data structures', 'cn', 'computer networks', 'daa', 'algorithms', 'coa', 'toc', 'automata', 'maths 1', 'm1', 'maths 2', 'm2', 'maths 3', 'm3', 'physics', 'chemistry', 'bee', 'oops', 'c programming', 'software engineering'];
+      for (const k of knownKeys) {
+        if (clean.toLowerCase().includes(k)) {
+          targetSubject = k;
+          break;
+        }
+      }
+    }
+
+    if (!targetSubject) {
+      text = `🎯 **Smart PYQ Exam Analyzer**\n\nI can analyze university question papers (PYQs) across past years and calculate the exact questions that appear with **60% to 70%+ recurrence frequency**, complete with step-by-step model answers!\n\nWhich subject would you like me to analyze? Click a subject below or type e.g. *"Important questions for OS"*:`;
+      actions.push({ label: 'Operating Systems (OS)', path: 'Important questions for Operating Systems' });
+      actions.push({ label: 'DBMS', path: 'Important questions for DBMS' });
+      actions.push({ label: 'Data Structures (DSA)', path: 'Important questions for Data Structures' });
+      actions.push({ label: 'Computer Networks (CN)', path: 'Important questions for Computer Networks' });
+      actions.push({ label: 'Engg Mathematics (M1)', path: 'Important questions for Engineering Mathematics' });
+      actions.push({ label: 'DAA', path: 'Important questions for DAA' });
+      return { text, resources, actions, ticket, toolsUsed, fallback: true };
+    }
+
+    toolsUsed.push('analyze_exam_questions');
+    const analysis = await analyzeExamQuestions({
+      subject: targetSubject,
+      minFrequency: 60,
+      includeAnswers: true
+    });
+
+    text = analysis.text;
+    actions = analysis.actions || [];
     return { text, resources, actions, ticket, toolsUsed, fallback: true };
   }
 

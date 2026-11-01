@@ -10,6 +10,7 @@ const { getWebsiteOverview, getUserActivityAnalytics, getAiUsageAnalytics, gener
 const { initiatePasswordReset, verifyResetOtp, completePasswordResetForUser } = require('./inChatAuthService');
 const { User, Document, Announcement } = require('../../db/models');
 const adminSuperpowers = require('./adminSuperpowersService');
+const { analyzeExamQuestions } = require('./smartExamAnalyzerService');
 
 // Tool definitions for Google Gemini API Function Calling
 const TOOL_DEFINITIONS = [
@@ -389,6 +390,32 @@ const TOOL_DEFINITIONS = [
       type: 'OBJECT',
       properties: {}
     }
+  },
+  {
+    name: 'analyze_exam_questions',
+    description: 'Smart Exam Paper Analyzer: Analyzes university question papers (PYQs) for a specific engineering subject, predicts recurring questions appearing with 60-70%+ frequency across multiple exam sessions, and provides structured model answers, unit weightage, and direct links to StudyMyte PYQs.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        subject: {
+          type: 'STRING',
+          description: 'The subject or course name to analyze (e.g. "Operating Systems", "Data Structures", "DBMS", "Computer Networks", "Engineering Mathematics", "DAA", "COA", "TOC", "C Programming")'
+        },
+        semester: {
+          type: 'STRING',
+          description: 'Optional semester (e.g. "3rd Sem", "4th Sem", "5th Sem")'
+        },
+        minFrequency: {
+          type: 'NUMBER',
+          description: 'Minimum recurrence frequency percentage (default 60, meaning appearing in 60-70%+ of exam papers)'
+        },
+        includeAnswers: {
+          type: 'BOOLEAN',
+          description: 'Whether to include step-by-step model answers and key scoring points for the repeated questions (default true)'
+        }
+      },
+      required: ['subject']
+    }
   }
 ];
 
@@ -746,6 +773,15 @@ async function executeTool(name, args = {}, userContext = null) {
         return { success: false, error: 'Access denied: Administrative privileges required.' };
       }
       return await adminSuperpowers.generateExecutiveSiteStatusReport(userContext);
+    }
+
+    case 'analyze_exam_questions': {
+      return await analyzeExamQuestions({
+        subject: args.subject,
+        semester: args.semester,
+        minFrequency: args.minFrequency || 60,
+        includeAnswers: args.includeAnswers !== false
+      });
     }
 
     default:
