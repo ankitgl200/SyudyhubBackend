@@ -426,12 +426,20 @@ const OtpVerificationSchema = new Schema({
     type: String,
     default: 'Unknown'
   },
+  verifiedAt: {
+    type: Date,
+    default: null
+  },
   createdAt: {
     type: Date,
     default: Date.now,
     expires: 900 // MongoDB TTL 15 minutes to purge completed/expired sessions
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now
   }
-});
+}, { timestamps: true });
 
 const OtpVerification = mongoose.model('OtpVerification', OtpVerificationSchema);
 const PasswordResetOtp = OtpVerification; // Alias if referenced as PasswordResetOtp
@@ -524,3 +532,209 @@ const SystemSetting = mongoose.model('SystemSetting', SystemSettingSchema);
 
 module.exports.TeamMember = TeamMember;
 module.exports.SystemSetting = SystemSetting;
+
+// ==========================================
+// MYTEE — Intelligent Assistant Schema Suite
+// ==========================================
+
+// MYTEE Conversation Session Schema
+const MyteeConversationSchema = new Schema({
+  userId: {
+    type: Schema.Types.ObjectId,
+    ref: 'User',
+    default: null,
+    index: true
+  },
+  sessionId: {
+    type: String,
+    required: true,
+    index: true
+  },
+  role: {
+    type: String,
+    enum: ['student', 'educator', 'admin', 'superadmin', 'guest'],
+    default: 'guest'
+  },
+  personalityMode: {
+    type: String,
+    enum: ['normal', 'sigma', 'roast', 'beast'],
+    default: 'normal'
+  },
+  messages: [{
+    role: { type: String, enum: ['user', 'model', 'system', 'assistant'], required: true },
+    content: { type: String, required: true },
+    actions: { type: Schema.Types.Mixed, default: [] },
+    resources: { type: Schema.Types.Mixed, default: [] },
+    ticket: { type: Schema.Types.Mixed, default: null },
+    timestamp: { type: Date, default: Date.now }
+  }],
+  createdAt: {
+    type: Date,
+    default: Date.now,
+    expires: 60 * 60 * 24 * 30 // Retention: 30 days automatic cleanup
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now
+  }
+});
+MyteeConversationSchema.index({ sessionId: 1, updatedAt: -1 });
+
+// MYTEE User Feedback Schema
+const MyteeFeedbackSchema = new Schema({
+  userId: {
+    type: Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+  sessionId: {
+    type: String,
+    default: null
+  },
+  rating: {
+    type: String,
+    enum: ['helpful', 'unhelpful'],
+    required: true
+  },
+  comment: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  query: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  responseSnippet: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  }
+});
+
+// MYTEE Usage & Performance Metrics Log
+const MyteeUsageLogSchema = new Schema({
+  userId: {
+    type: Schema.Types.ObjectId,
+    ref: 'User',
+    default: null,
+    index: true
+  },
+  role: {
+    type: String,
+    default: 'guest'
+  },
+  sessionId: {
+    type: String,
+    default: null
+  },
+  clientIp: {
+    type: String,
+    default: 'Unknown'
+  },
+  endpoint: {
+    type: String,
+    default: '/api/mytee/chat'
+  },
+  query: {
+    type: String,
+    default: ''
+  },
+  intent: {
+    type: String,
+    default: 'general'
+  },
+  toolsUsed: {
+    type: [String],
+    default: []
+  },
+  scopePassed: {
+    type: Boolean,
+    default: true
+  },
+  success: {
+    type: Boolean,
+    default: true
+  },
+  responseTimeMs: {
+    type: Number,
+    default: 0
+  },
+  estimatedTokens: {
+    type: Number,
+    default: 0
+  },
+  modelUsed: {
+    type: String,
+    default: 'gemini-1.5-flash'
+  },
+  errorMessage: {
+    type: String,
+    default: null
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now,
+    index: true,
+    expires: 60 * 60 * 24 * 90 // 90 days retention
+  }
+});
+MyteeUsageLogSchema.index({ createdAt: -1 });
+
+// MYTEE Administrative & Security Audit Log
+const MyteeAuditLogSchema = new Schema({
+  adminUserId: {
+    type: Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+    index: true
+  },
+  adminName: {
+    type: String,
+    required: true
+  },
+  action: {
+    type: String,
+    required: true,
+    index: true
+  },
+  target: {
+    type: String,
+    default: ''
+  },
+  details: {
+    type: Schema.Types.Mixed,
+    default: {}
+  },
+  ip: {
+    type: String,
+    default: 'Unknown'
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now,
+    index: true
+  }
+});
+MyteeAuditLogSchema.index({ createdAt: -1 });
+
+const MyteeConversation = mongoose.model('MyteeConversation', MyteeConversationSchema);
+const MyteeFeedback = mongoose.model('MyteeFeedback', MyteeFeedbackSchema);
+const MyteeUsageLog = mongoose.model('MyteeUsageLog', MyteeUsageLogSchema);
+const MyteeAuditLog = mongoose.model('MyteeAuditLog', MyteeAuditLogSchema);
+
+module.exports.MyteeConversation = MyteeConversation;
+module.exports.MyteeFeedback = MyteeFeedback;
+module.exports.MyteeUsageLog = MyteeUsageLog;
+module.exports.MyteeAuditLog = MyteeAuditLog;
+
+// Backward-compatible aliases for sonic naming convention
+module.exports.SonicConversation = MyteeConversation;
+module.exports.SonicFeedback = MyteeFeedback;
+module.exports.SonicUsageLog = MyteeUsageLog;
+module.exports.SonicAuditLog = MyteeAuditLog;
