@@ -73,6 +73,28 @@ async function auth(req, res, next) {
       return res.status(401).json({ message: 'User no longer exists' });
     }
 
+    // Check if user is blocked (Autonomous Security Sentinel Gate)
+    if (user.isBlocked) {
+      const now = new Date();
+      // Check for progressive auto-unban expiration
+      if (user.currentBanExpiresAt && now >= new Date(user.currentBanExpiresAt)) {
+        user.isBlocked = false;
+        user.currentBanExpiresAt = null;
+        user.securityStrikes = 0;
+        await user.save();
+      } else {
+        return res.status(403).json({
+          blocked: true,
+          code: 'ACCOUNT_SECURITY_LOCKDOWN',
+          message: 'Your account has been suspended by the StudyMyte AI Security Sentinel due to repeated security policy violations.',
+          banCount: user.banCount || 1,
+          currentBanExpiresAt: user.currentBanExpiresAt,
+          blockedReason: user.blockedReason || 'Security policy violation',
+          isPermanent: !user.currentBanExpiresAt
+        });
+      }
+    }
+
     if (!user.approved) {
       return res.status(403).json({ message: 'Your account is pending admin approval' });
     }

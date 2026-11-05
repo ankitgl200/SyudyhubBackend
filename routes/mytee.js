@@ -19,6 +19,7 @@ const { getWebsiteOverview, getUserActivityAnalytics, getAiUsageAnalytics, gener
 const { logAction, getRecentAuditLogs } = require('../services/mytee/myteeAuditLogger');
 const { initiatePasswordReset, verifyResetOtp, completePasswordReset, completePasswordResetForUser } = require('../services/mytee/inChatAuthService');
 const { handleFunQuery } = require('../services/mytee/funPersonalityService');
+const threatSentinelService = require('../services/mytee/threatSentinelService');
 const { MyteeConversation, MyteeFeedback, MyteeUsageLog, User, OtpVerification } = require('../db/models');
 
 /**
@@ -85,6 +86,42 @@ router.post('/chat', optionalAuth, myteeChatLimiter, async (req, res) => {
   const clientIp = req.ip || req.socket?.remoteAddress || 'Unknown';
   const userRole = req.user ? req.user.role : 'guest';
 
+  // Support Server-Sent Events (SSE) streaming for real-time ChatGPT-style token delivery
+  const isStream = Boolean(req.body.stream || req.headers.accept?.includes('text/event-stream'));
+  let streamedAnyToken = false;
+
+  const sendEvent = (event, data) => {
+    if (res.writableEnded) return;
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    if (typeof res.flush === 'function') res.flush();
+  };
+
+  if (isStream) {
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    if (typeof res.flushHeaders === 'function') res.flushHeaders();
+  }
+
+  const onToken = isStream ? (token) => {
+    if (token) {
+      streamedAnyToken = true;
+      sendEvent('token', { text: token });
+    }
+  } : null;
+
+  const respond = (data, statusCode = 200) => {
+    if (isStream) {
+      if (!streamedAnyToken && data.reply) {
+        sendEvent('token', { text: data.reply });
+      }
+      sendEvent('complete', data);
+      return res.end();
+    }
+    return res.status(statusCode).json(data);
+  };
+
   // 1. Retrieve or initialize conversation session
   let conversation = await MyteeConversation.findOne({ sessionId: activeSessionId });
   if (!conversation) {
@@ -136,7 +173,7 @@ router.post('/chat', optionalAuth, myteeChatLimiter, async (req, res) => {
 
         await conversation.save();
 
-        return res.json({
+        return respond({
           success: true,
           sessionId: activeSessionId,
           reply: successReply,
@@ -148,6 +185,46 @@ router.post('/chat', optionalAuth, myteeChatLimiter, async (req, res) => {
         });
       }
     }
+  }
+
+  // 1.75 Autonomous AI Security & Threat Sentinel (3-Strike Surveillance)
+  try {
+    const sentinelResult = await threatSentinelService.processSecuritySurveillance(trimmed, req.user, conversation.messages || []);
+    if (sentinelResult.action === 'blocked' || sentinelResult.action === 'banned') {
+      const banNotice = `[SECURITY SENTINEL LOCKDOWN] Your account has been suspended due to severe security violations (Strike ${sentinelResult.strikeNumber || 3}/3: ${sentinelResult.reason || "Security policy violation"}). Ban Tier: ${sentinelResult.banDurationLabel || "Suspension"}. All platform access revoked. Contact support@studymyte.tech.`;
+      
+      conversation.messages.push({ role: 'user', content: trimmed, timestamp: new Date() });
+      conversation.messages.push({ role: 'model', content: banNotice, timestamp: new Date() });
+      await conversation.save();
+
+      return respond({
+        success: false,
+        blocked: true,
+        code: 'ACCOUNT_SECURITY_LOCKDOWN',
+        reply: banNotice,
+        message: banNotice,
+        banCount: sentinelResult.banCount || 1,
+        banDurationLabel: sentinelResult.banDurationLabel,
+        currentBanExpiresAt: sentinelResult.currentBanExpiresAt,
+        isPermanent: !sentinelResult.currentBanExpiresAt
+      }, 403);
+    } else if (sentinelResult.action === 'warn') {
+      conversation.messages.push({ role: 'user', content: trimmed, timestamp: new Date() });
+      conversation.messages.push({ role: 'model', content: sentinelResult.warningReply, timestamp: new Date() });
+      await conversation.save();
+
+      return respond({
+        success: true,
+        sessionId: activeSessionId,
+        reply: sentinelResult.warningReply,
+        resources: [],
+        actions: [{ label: 'Browse Academic Notes', path: '/notes' }, { label: 'Browse PYQs', path: '/papers' }],
+        securityStrike: sentinelResult.strikeNumber,
+        securitySeverity: sentinelResult.severity
+      });
+    }
+  } catch (sentinelErr) {
+    console.error('[ThreatSentinel] Surveillance error:', sentinelErr.message);
   }
 
   // 1.8. Fun Personality & Gen-Z Interaction Layer (Hacking jokes, data dump requests, admin/owner bluffs, special modes)
@@ -188,7 +265,7 @@ router.post('/chat', optionalAuth, myteeChatLimiter, async (req, res) => {
       responseTimeMs: Date.now() - startTime
     });
 
-    return res.json({
+    return respond({
       success: true,
       sessionId: activeSessionId,
       reply: funResult.text,
@@ -219,7 +296,7 @@ router.post('/chat', optionalAuth, myteeChatLimiter, async (req, res) => {
       responseTimeMs: Date.now() - startTime
     });
 
-    return res.json({
+    return respond({
       success: true,
       sessionId: activeSessionId,
       reply: politeReply,
@@ -240,7 +317,8 @@ router.post('/chat', optionalAuth, myteeChatLimiter, async (req, res) => {
       message: trimmed,
       history: conversation.messages,
       userContext: req.user,
-      personalityMode: conversation.personalityMode || 'normal'
+      personalityMode: conversation.personalityMode || 'normal',
+      onToken
     });
 
     if (aiResult.newMode) {
@@ -286,7 +364,7 @@ router.post('/chat', optionalAuth, myteeChatLimiter, async (req, res) => {
       modelUsed: aiResult.model || 'fallback-local'
     });
 
-    return res.json({
+    return respond({
       success: true,
       sessionId: activeSessionId,
       reply: aiResult.text,
@@ -315,11 +393,12 @@ router.post('/chat', optionalAuth, myteeChatLimiter, async (req, res) => {
       responseTimeMs: Date.now() - startTime
     });
 
-    return res.status(500).json({
+    return respond({
       success: false,
       message: 'MYTEE is currently experiencing high load. Please try again or visit our Help & Support page.',
+      reply: 'MYTEE is currently experiencing high load. Please try again or visit our Help & Support page.',
       supportUrl: '/support'
-    });
+    }, 500);
   }
 });
 

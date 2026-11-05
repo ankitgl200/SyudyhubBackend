@@ -416,6 +416,24 @@ const TOOL_DEFINITIONS = [
       },
       required: ['subject']
     }
+  },
+  {
+    name: 'search_document_contents',
+    description: 'Perform deep semantic vector search inside actual course PDFs, lecture notes, syllabus, and PYQ documents on StudyMyte to find exact concepts, definitions, formulas, and answers.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        query: {
+          type: 'STRING',
+          description: 'The topic, question, or key phrase to search inside document texts'
+        },
+        subject: {
+          type: 'STRING',
+          description: 'Optional subject filter (e.g. OOPS, DAA, DBMS, Operating Systems, Computer Networks)'
+        }
+      },
+      required: ['query']
+    }
   }
 ];
 
@@ -782,6 +800,30 @@ async function executeTool(name, args = {}, userContext = null) {
         minFrequency: args.minFrequency || 60,
         includeAnswers: args.includeAnswers !== false
       });
+    }
+
+    case 'search_document_contents': {
+      const ragService = require('./ragService');
+      const results = await ragService.searchVectorChunks(args.query, {
+        subject: args.subject,
+        limit: 4,
+        minSimilarity: 0.45
+      });
+      return {
+        success: true,
+        count: results.length,
+        query: args.query,
+        chunks: results.map(r => ({
+          documentId: r.documentId,
+          title: r.metadata ? r.metadata.title : 'Document',
+          subject: r.metadata ? r.metadata.subject : '',
+          type: r.metadata ? r.metadata.type : 'notes',
+          fileUrl: r.metadata ? r.metadata.fileUrl : '',
+          pageNumber: r.metadata ? r.metadata.pageNumber : null,
+          similarity: Number(r.similarity ? r.similarity.toFixed(3) : (r.score ? r.score.toFixed(3) : 0)),
+          textSnippet: r.text
+        }))
+      };
     }
 
     default:

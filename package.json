@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test test_duplicate_paper_security.js test_document_security.js test_rate_limit_security.js test_welcome_email.js test_user_export.js test_mytee.js test_smart_exam_analyzer.js test_admin_superpowers.js",
-    "migrate:duplicates": "node scripts/migrate_paper_duplicates.js"
+    "migrate:duplicates": "node scripts/migrate_paper_duplicates.js",
+    "rag:backfill": "node scripts/backfill_rag_embeddings.js"
   },
   "dependencies": {
     "@google/genai": "^2.32.0",

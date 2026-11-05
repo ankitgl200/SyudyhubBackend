@@ -103,6 +103,29 @@ const BEAST_REPERTOIRE = [
   "WE ARE NOT HERE TO JUST PASS, WE ARE HERE TO DOMINATE THE SCORECARD! Lock in! 🔥"
 ];
 
+// Built-in offline responses for high-frequency common queries (Saves Gemini API quota)
+const GREETING_RESPONSES = [
+  "Hey there! 👋 I am **MYTEE**, your StudyMyte academic copilot. What are we studying today? Tell me your subject, semester, or topic, and I'll pull the best notes and PYQs for you! 📚",
+  "Hello! 🚀 Ready to study? Whether you need previous year question papers (PYQs), subject notes, or exam guidance, I'm here to help. How can I assist your prep today?",
+  "Hey! 👋 All systems active and ready. Let me know what coursework, unit, or exam topic you're tackling today! 🔥",
+  "Namaste! 🙏 Welcome back to StudyMyte. What can I get for you right now—syllabus, notes, or PYQs?"
+];
+
+const IDENTITY_RESPONSES = [
+  "I am **MYTEE**, the intelligent AI academic assistant built specifically for StudyMyte! 🎓\n\nHere is what I can do for you in seconds:\n• 📚 **Notes & Syllabus**: Find unit-wise notes across all engineering semesters.\n• 📝 **PYQ Papers**: Browse previous year university exam question papers.\n• 🔍 **Inbuilt Smart PDF Viewer**: Open and read documents directly in your browser without extra downloads.\n• 🎯 **Exam Prep & Analysis**: High-yield syllabus breakdowns for your midterms & finals.\n• 🛠️ **Platform Support**: Assist you with navigation, bug reports, and theme customization.\n\nTell me what subject you're working on today!",
+];
+
+const COURTESY_RESPONSES = [
+  "You're very welcome! 😊 Always here to make college study effortless. Let me know whenever you need more notes or PYQs! 🚀",
+  "Glad I could help! 👍 Best of luck with your preparation. Keep grinding! 🔥",
+  "Anytime, legend! Go crush those exams. I'm right here if you need anything else! 📚"
+];
+
+const STATUS_RESPONSES = [
+  "I'm operating at 100% peak efficiency and ready to help you study! ⚡ How is your exam prep going? Need notes or previous year papers today?",
+  "All good on my end! 🚀 How are your semester preparations coming along? Let's get some revision done!"
+];
+
 /**
  * Checks if a query is a fun, cheeky, or mode-switching question.
  * Returns null if not a fun query, or response object if matched.
@@ -169,13 +192,93 @@ function handleFunQuery(cleanQuery, userContext = null, currentMode = 'normal') 
   }
 
   // ----------------------------------------------------
-  // 1. "HOW CAN I HACK SITE" / HACKING INQUIRIES
+  // BUILT-IN GREETINGS ("hi", "hello", "namaste", etc.) - Saves Gemini API quota
   // ----------------------------------------------------
   if (
-    /(how\s+(can\s+i|to)\s+(hack|crack|breach)\s+(this\s+)?(site|website|studymyte|server|database))/i.test(q) ||
+    /^(hi+|hey+|heyy+|hello+|helo+|namaste+|pranam+|hola|yo|sup|wassup|gm|gn|good\s*(morning|afternoon|evening)|kya\s*haal(\s*hai)?|kaise\s*ho)\b/i.test(q) ||
+    /^(hi|hello|hey)\s+(mytee|studyhub|studymyte|bro|bhai|sir|bot|ai)$/i.test(q)
+  ) {
+    return {
+      matched: true,
+      text: getRandomItem(GREETING_RESPONSES),
+      actions: standardActions
+    };
+  }
+
+  // ----------------------------------------------------
+  // BUILT-IN IDENTITY & INTRO ("who are you", "what can you do") - Saves Gemini API quota
+  // ----------------------------------------------------
+  if (
+    /^(who\s+are\s+you|what\s+is\s+your\s+name|what\s+can\s+you\s+do|what\s+do\s+you\s+do|introduce\s+yourself|about\s+you|koun\s+ho|tum\s+koun\s+ho|kya\s+kar\s+sakte\s+ho|features|help\s+me)$/i.test(q) ||
+    /(what\s+can\s+mytee\s+do|tell\s+me\s+about\s+yourself)/i.test(q)
+  ) {
+    return {
+      matched: true,
+      text: getRandomItem(IDENTITY_RESPONSES),
+      actions: [
+        { label: 'Browse Notes', path: '/notes' },
+        { label: 'Browse PYQs', path: '/papers' },
+        { label: 'Meet Founders', path: '/about' }
+      ]
+    };
+  }
+
+  // ----------------------------------------------------
+  // BUILT-IN COURTESIES ("thank you", "great", "nice", etc.) - Saves Gemini API quota
+  // ----------------------------------------------------
+  if (
+    /^(thank\s*you|thanks+|thx|thanku|dhanyawad|shukriya|nice|good\s*job|awesome|great|mast|bohot\s*badhiya|shabash|well\s*done|ok|okay|cool)$/i.test(q)
+  ) {
+    return {
+      matched: true,
+      text: getRandomItem(COURTESY_RESPONSES),
+      actions: standardActions
+    };
+  }
+
+  // ----------------------------------------------------
+  // BUILT-IN STATUS CHECK ("how are you", "kya chal raha hai") - Saves Gemini API quota
+  // ----------------------------------------------------
+  if (
+    /^(how\s+are\s+you|how\s+are\s+you\s+doing|how's\s+it\s+going|sab\s+badhiya|kya\s+chal\s+raha\s+hai|what's\s+up|sab\s+thik)$/i.test(q)
+  ) {
+    return {
+      matched: true,
+      text: getRandomItem(STATUS_RESPONSES),
+      actions: standardActions
+    };
+  }
+
+  // ----------------------------------------------------
+  // HOW TO UPLOAD / CONTRIBUTE (2 Methods Guide) - Saves Gemini API quota
+  // ----------------------------------------------------
+  if (/(how\s+to\s+(upload|contribute|add)\s+(notes?|papers?|doc|documents?|pdf|file)|upload\s+(kaise\s+kare|steps|karna\s+hai)|contribute\s+(kaise|karna))/i.test(q)) {
+    return {
+      matched: true,
+      text: `📚 **StudyMyte par Study Material Upload Karne Ke 2 Tareeqe Hain:**\n\n` +
+        `### 1️⃣ Method 1: Screen ke Bottom-Left '+' Floating Button Se\n` +
+        `• Aapki screen ke bottom-left corner par ek round blue **\`+\`** floating button dikhega.\n` +
+        `• Use tap karein, ek modal open hoga jisme aap Document Title, Resource Category (Notes/Papers), Target Folder/Subject, aur Academic Year select karke apni PDF upload kar sakte hain.\n\n` +
+        `### 2️⃣ Method 2: Direct Specific Subject Folder Ke Andar Se\n` +
+        `• Website par pehle relevant section me jayein (jaise \`/notes\` ya \`/papers\`).\n` +
+        `• Us subject ke folder ke andar jayein jahan aapko document dalna hai (e.g. *Subject Notes > First Year > Engineering Chemistry*).\n` +
+        `• Folder ke andar top-right corner par **\`+ Contribute\`** button par click karein. Section aur Target Folder pehle se pre-selected aayenge—bas file attach karke submit karein!\n\n` +
+        `Admin approve karte hi aapka document portal par live ho jaega! 🚀`,
+      actions: [
+        { label: 'Upload Document Now', path: '/my-contributions' },
+        { label: 'Browse Notes Folders', path: '/notes' }
+      ]
+    };
+  }
+
+  // ----------------------------------------------------
+  // 1. "HOW CAN I HACK SITE" / HACKING INQUIRIES (Typo-Tolerant)
+  // ----------------------------------------------------
+  if (
+    /(how\s+(can\s+i|to)\s+(hack+k*|crack\w*|breach\w*)\s+(this\s+|your\s+|you\s+)?(site|website|studymyte|server|database|system|systems?))/i.test(q) ||
     /^(how\s+to\s+hack|hack\s+(this\s+)?(site|website|studymyte)|can\s+i\s+hack(\s+(this\s+)?(site|website|studymyte))?|teach\s+me\s+to\s+hack|hacker\s+mode)$/i.test(q) ||
     /(i\s+(want|would\s+like)\s+to\s+hack\s+(this\s+)?(site|studymyte|website))/i.test(q) ||
-    /(hack\s+(this\s+)?(site|website|studymyte))/i.test(q)
+    /(hack\s+(this\s+)?(site|website|studymyte|systems?))/i.test(q)
   ) {
     return {
       matched: true,

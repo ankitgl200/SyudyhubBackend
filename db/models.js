@@ -57,6 +57,31 @@ const UserSchema = new Schema({
   fcmTokens: {
     type: [String],
     default: []
+  },
+  isBlocked: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  securityStrikes: {
+    type: Number,
+    default: 0
+  },
+  banCount: {
+    type: Number,
+    default: 0
+  },
+  currentBanExpiresAt: {
+    type: Date,
+    default: null
+  },
+  blockedReason: {
+    type: String,
+    default: ''
+  },
+  blockedAt: {
+    type: Date,
+    default: null
   }
 });
 
@@ -188,6 +213,20 @@ const DocumentSchema = new Schema({
     matchReason: { type: String, trim: true, default: '' },
     reviewedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     reviewedAt: { type: Date, default: null }
+  },
+  // --- RAG Vector Search Indexing Fields ---
+  isRagIndexed: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  ragIndexedAt: {
+    type: Date,
+    default: null
+  },
+  chunkCount: {
+    type: Number,
+    default: 0
   },
   createdAt: {
     type: Date,
@@ -723,15 +762,139 @@ const MyteeAuditLogSchema = new Schema({
 });
 MyteeAuditLogSchema.index({ createdAt: -1 });
 
+// ==========================================
+// RAG Vector Document Chunk Schema
+// ==========================================
+const DocumentChunkSchema = new Schema({
+  documentId: {
+    type: Schema.Types.ObjectId,
+    ref: 'Document',
+    required: true,
+    index: true
+  },
+  chunkIndex: {
+    type: Number,
+    required: true
+  },
+  text: {
+    type: String,
+    required: true
+  },
+  embedding: {
+    type: [Number],
+    required: true,
+    default: []
+  },
+  metadata: {
+    title: { type: String, default: '', index: true },
+    subject: { type: String, default: '', index: true },
+    branch: { type: String, default: '', index: true },
+    year: { type: String, default: '', index: true },
+    type: { type: String, default: 'notes', index: true },
+    fileUrl: { type: String, default: '' },
+    pageNumber: { type: Number, default: 1 }
+  },
+  tokenCount: {
+    type: Number,
+    default: 0
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now,
+    index: true
+  }
+});
+
+DocumentChunkSchema.index({ documentId: 1, chunkIndex: 1 }, { unique: true });
+DocumentChunkSchema.index({ 'metadata.subject': 1, 'metadata.branch': 1 });
+
 const MyteeConversation = mongoose.model('MyteeConversation', MyteeConversationSchema);
 const MyteeFeedback = mongoose.model('MyteeFeedback', MyteeFeedbackSchema);
 const MyteeUsageLog = mongoose.model('MyteeUsageLog', MyteeUsageLogSchema);
 const MyteeAuditLog = mongoose.model('MyteeAuditLog', MyteeAuditLogSchema);
+// Security Report Schema (Consolidated 3-Strike Incident Dossier)
+const SecurityReportSchema = new Schema({
+  userId: {
+    type: Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+    index: true
+  },
+  userName: {
+    type: String,
+    required: true
+  },
+  userEmail: {
+    type: String,
+    required: true,
+    index: true
+  },
+  userRole: {
+    type: String,
+    default: 'student'
+  },
+  strikes: [
+    {
+      strikeNumber: { type: Number, required: true },
+      severity: { type: String, enum: ['normal', 'high', 'extreme'], required: true },
+      threatCategory: { type: String, default: 'suspicious_activity' },
+      flaggedMessage: { type: String, required: true },
+      aiReason: { type: String, default: '' },
+      createdAt: { type: Date, default: Date.now },
+      recentChat: [
+        {
+          role: { type: String },
+          content: { type: String },
+          timestamp: { type: Date, default: Date.now }
+        }
+      ]
+    }
+  ],
+  totalStrikes: {
+    type: Number,
+    default: 1
+  },
+  currentBanLevel: {
+    type: Number,
+    default: 0
+  },
+  status: {
+    type: String,
+    enum: ['active', 'banned', 'unblocked', 'dismissed'],
+    default: 'active',
+    index: true
+  },
+  lastReportedAt: {
+    type: Date,
+    default: Date.now,
+    index: true
+  },
+  banExpiresAt: {
+    type: Date,
+    default: null
+  },
+  resolvedAt: {
+    type: Date,
+    default: null
+  },
+  resolvedBy: {
+    type: Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  }
+}, { timestamps: true });
 
+SecurityReportSchema.index({ userId: 1, status: 1 });
+
+const DocumentChunk = mongoose.model('DocumentChunk', DocumentChunkSchema);
+const SecurityReport = mongoose.model('SecurityReport', SecurityReportSchema);
+
+module.exports.SecurityReport = SecurityReport;
 module.exports.MyteeConversation = MyteeConversation;
 module.exports.MyteeFeedback = MyteeFeedback;
 module.exports.MyteeUsageLog = MyteeUsageLog;
 module.exports.MyteeAuditLog = MyteeAuditLog;
+module.exports.DocumentChunk = DocumentChunk;
 
 // Backward-compatible aliases for sonic naming convention
 module.exports.SonicConversation = MyteeConversation;

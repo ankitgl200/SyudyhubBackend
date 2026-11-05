@@ -61,6 +61,11 @@ const reviewRoutes = require('./routes/reviews');
 const teamRoutes = require('./routes/team');
 const settingsRoutes = require('./routes/settings');
 const myteeRoutes = require('./routes/mytee');
+const securityAdminRoutes = require('./routes/securityAdmin');
+
+// Autonomous Site-Wide Security Sentinel (WAF & Tamper Detection)
+const siteSecuritySentinel = require('./middleware/siteSecuritySentinel');
+app.use(siteSecuritySentinel);
 
 // Mount API routes
 app.use('/api/auth', authRoutes);
@@ -74,6 +79,7 @@ app.use('/api/team', teamRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/mytee', myteeRoutes);
 app.use('/api/sonic', myteeRoutes);
+app.use('/api/admin/security', securityAdminRoutes);
 
 // Seed default data using Mongoose
 async function seedDefaultData() {
