@@ -106,18 +106,48 @@ router.get('/my', auth, async (req, res) => {
 router.get('/', isAdmin, async (req, res) => {
   try {
     const list = await HelpRequest.find().sort({ createdAt: -1 });
-    res.json(list.map(r => ({
-      id: r._id,
-      userId: r.userId,
-      name: r.name,
-      phone: r.phone,
-      role: r.role,
-      requestedEmail: r.requestedEmail || null,
-      subject: r.subject,
-      message: r.message,
-      status: r.status,
-      createdAt: r.createdAt
-    })));
+
+    const userIds = list.map(r => r.userId).filter(Boolean);
+    const phones = list.map(r => r.phone).filter(Boolean);
+
+    const { User } = require('../db/models');
+    const matchedUsers = await User.find({
+      $or: [
+        { _id: { $in: userIds } },
+        { phone: { $in: phones } }
+      ]
+    }).select('_id phone email name').lean();
+
+    const userById = new Map();
+    const userByPhone = new Map();
+    matchedUsers.forEach(u => {
+      if (u._id) userById.set(u._id.toString(), u);
+      if (u.phone) userByPhone.set(u.phone.trim(), u);
+    });
+
+    const enriched = list.map(r => {
+      const u = (r.userId && userById.get(r.userId.toString())) || (r.phone && userByPhone.get(r.phone.trim())) || null;
+      const userEmail = u && u.email ? u.email.trim() : null;
+      // Account is linked if user record already exists in database with a valid email
+      const isEmailLinked = !!(userEmail && userEmail.length > 0);
+
+      return {
+        id: r._id,
+        userId: r.userId,
+        name: r.name,
+        phone: r.phone,
+        role: r.role,
+        requestedEmail: r.requestedEmail || null,
+        userEmail: userEmail,
+        isEmailLinked: isEmailLinked,
+        subject: r.subject,
+        message: r.message,
+        status: r.status,
+        createdAt: r.createdAt
+      };
+    });
+
+    res.json(enriched);
   } catch (err) {
     console.error('Load help requests error:', err);
     res.status(500).json({ message: 'Server error loading help requests' });

@@ -210,20 +210,16 @@ router.get('/unread', auth, async (req, res) => {
 // @desc    Mark a notification as read (Authenticated recipient only)
 router.post('/read/:id', auth, async (req, res) => {
   try {
-    const notification = await Notification.findById(req.params.id);
-    if (!notification) {
-      return res.status(404).json({ message: 'Notification not found' });
+    const result = await Notification.findOneAndUpdate(
+      { _id: req.params.id, recipientId: req.user.id },
+      { $set: { read: true } },
+      { new: true }
+    );
+    if (!result) {
+      return res.status(404).json({ message: 'Notification not found or access denied' });
     }
 
-    // Ensure the logged-in user is the recipient of the notification
-    if (notification.recipientId.toString() !== req.user.id) {
-      return res.status(403).json({ message: 'Access denied: You can only read your own notifications' });
-    }
-
-    notification.read = true;
-    await notification.save();
-
-    res.json({ message: 'Notification marked as read', id: notification._id });
+    res.json({ message: 'Notification marked as read', id: result._id });
   } catch (err) {
     console.error('Mark notification read error:', err);
     res.status(500).json({ message: 'Server error updating notification status' });

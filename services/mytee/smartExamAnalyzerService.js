@@ -650,51 +650,25 @@ async function analyzeExamQuestions({
 
   let rawTopics = recurrenceData ? recurrenceData.topics : [];
 
-  // If subject is not in static catalog, generate generic high-yield structure based on engineering syllabus
-  if (rawTopics.length === 0) {
-    rawTopics = [
-      {
-        id: 'gen_1',
-        topic: `Core Fundamentals & Definitions of ${canonicalSubject}`,
-        unit: 'Unit 1: Fundamentals & Basic Principles',
-        repeatFrequencyPercent: 85,
-        typicalMarks: '10 Marks',
-        yearsAppeared: ['2020', '2021', '2022', '2023', '2024'],
-        question: `Explain the fundamental architecture, mathematical principles, and key classification models in ${canonicalSubject} with a neat schematic diagram.`,
-        modelAnswer: [
-          `• **Primary Principle**: State the foundational laws and architectural blocks of ${canonicalSubject}.`,
-          '• **Classifications**: Provide comparative breakdown of key approaches with advantages and trade-offs.',
-          '• **Exam Strategy**: Draw labeled diagrams with input, processing stages, and output states for maximum marks.'
-        ]
-      },
-      {
-        id: 'gen_2',
-        topic: `Design Methodologies & Comparative Analysis in ${canonicalSubject}`,
-        unit: 'Unit 2: Modeling & Methodologies',
-        repeatFrequencyPercent: 75,
-        typicalMarks: '10 Marks',
-        yearsAppeared: ['2019', '2021', '2023', '2024'],
-        question: `Differentiate between key contrasting methodologies in ${canonicalSubject}. Explain their step-by-step algorithms and performance trade-offs.`,
-        modelAnswer: [
-          '• **Comparison Matrix**: Tabulate key parameters (Time/Space complexity, throughput, fault tolerance).',
-          '• **Algorithmic Steps**: Formulate initialization, loop termination condition, and invariant correctness.'
-        ]
-      },
-      {
-        id: 'gen_3',
-        topic: `Practical Numerical / Implementation Problem`,
-        unit: 'Unit 4: Applications & Numerical Analysis',
-        repeatFrequencyPercent: 68,
-        typicalMarks: '10 Marks',
-        yearsAppeared: ['2020', '2022', '2023'],
-        question: `Solve numerical/case problem for a standard scenario in ${canonicalSubject} following standard university calculation steps.`,
-        modelAnswer: [
-          '• Write down given parameters and standard conversion units.',
-          '• Apply governing equations explicitly before substituting values.',
-          '• Conclude with final answer highlighted in a box with correct units.'
-        ]
-      }
-    ];
+  // STRICT RULE: If subject is not in recurrence database and insufficient real papers exist,
+  // DO NOT fabricate fake generic questions! Honestly inform user and guide them to contribute.
+  if (rawTopics.length === 0 && dbPapers.length < 2) {
+    return {
+      text: `🎯 **Smart Exam Analyzer — ${canonicalSubject}**\n\n` +
+        `> ⚠️ **Insufficient Past Year Papers in Portal**\n\n` +
+        `Hamare portal par abhi **${canonicalSubject}** ke sufficient previous year question papers uploaded nahi hain. Genuine aur 100% accurate repeating question pattern nikaalne ke liye kam se kam 2-3 saal ke real exam papers zaroori hote hain.\n\n` +
+        `💡 **Aap is subject ke papers contribute kar sakte hain:**\n` +
+        `Agar aapke paas iske question papers hain, toh aap 2 tareeqon se upload kar sakte hain:\n` +
+        `• **Method 1 (Screen '+' Button):** Screen ke bottom-left corner par round blue **\`+\`** floating icon par click karein, Title, Category (Question Paper) aur Target Folder chunein aur PDF upload karein.\n` +
+        `• **Method 2 (In-Folder Contribute):** \`/papers\` section me jakar us subject ke folder me jayein aur top-right par **\`+ Contribute\`** button dabayein (wahan category aur folder pehle se pre-selected aayenge).\n\n` +
+        `Aapke upload karte hi aur admin approval ke baad hamara system automatically repeating high-yield topics calculate kar lega! 📚`,
+      subject: canonicalSubject,
+      hasData: false,
+      actions: [
+        { label: 'Browse Existing Papers', path: '/papers' },
+        { label: 'Contribute Document', path: '/my-contributions' }
+      ]
+    };
   }
 
   // Filter topics by frequency threshold (>= minFrequency, typically 60%)

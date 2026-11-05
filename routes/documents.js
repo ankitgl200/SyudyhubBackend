@@ -5,7 +5,8 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const cloudinary = require('cloudinary').v2;
-const { Document, Announcement, Notification, User, DuplicatePaperGroup } = require('../db/models');
+const { Document, Announcement, Notification, User, DuplicatePaperGroup, DocumentChunk } = require('../db/models');
+const ragService = require('../services/mytee/ragService');
 const config = require('../config');
 const { auth, isStaff, isAdmin } = require('../middleware/auth');
 const admin = require('../services/firebaseAdmin');
@@ -525,6 +526,11 @@ router.post('/upload', isStaff, (req, res) => {
       
       await newDoc.save();
 
+      // Trigger automatic background RAG indexing
+      ragService.indexDocument(newDoc._id).catch(ragErr => {
+        console.warn(`[RAG Auto-Index] Upload indexing skipped/failed for "${newDoc.title}":`, ragErr.message);
+      });
+
       // If group had no canonical, set this new approved doc as canonical
       if (duplicateGroupId) {
         await DuplicatePaperGroup.findByIdAndUpdate(duplicateGroupId, {
@@ -772,6 +778,7 @@ router.delete('/:id', isStaff, async (req, res) => {
     }
 
     await Document.findByIdAndDelete(docId);
+    await DocumentChunk.deleteMany({ documentId: docId });
     res.json({ message: 'Document deleted successfully', docId });
   } catch (err) {
     console.error('Delete document error:', err);
@@ -1073,6 +1080,11 @@ router.post('/approve/:id', isAdmin, async (req, res) => {
     doc.status = 'approved';
     await doc.save();
 
+    // Trigger automatic background RAG indexing
+    ragService.indexDocument(doc._id).catch(ragErr => {
+      console.warn(`[RAG Auto-Index] Approval indexing skipped/failed for ${doc.title}:`, ragErr.message);
+    });
+
     // Create a Notification for the contributor
     if (doc.uploadedByUserId) {
       const successMessage = `Dear User, \nYour File "${doc.title}" was Accepted by the admins and it is listed on the Platform.\nthank you for your Contribution`;
@@ -1155,6 +1167,7 @@ router.post('/reject/:id', isAdmin, async (req, res) => {
 
     // Delete document record
     await Document.findByIdAndDelete(req.params.id);
+    await DocumentChunk.deleteMany({ documentId: req.params.id });
 
     res.json({ message: 'Document rejected and deleted successfully', docId: req.params.id });
   } catch (err) {
