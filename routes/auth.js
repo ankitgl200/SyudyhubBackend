@@ -266,6 +266,22 @@ router.get('/me', auth, async (req, res) => {
   }
 });
 
+// @route   GET api/auth/lockout-status/:userId
+// @desc    Check if a suspended user has been unbanned by administration
+router.get('/lockout-status/:userId', async (req, res) => {
+  try {
+    const user = await User.findById(req.params.userId).select('isBlocked currentBanExpiresAt blockedReason');
+    if (!user) return res.json({ blocked: false });
+    const isStillBlocked = user.isBlocked && (!user.currentBanExpiresAt || new Date() < new Date(user.currentBanExpiresAt));
+    res.json({
+      blocked: isStillBlocked,
+      currentBanExpiresAt: user.currentBanExpiresAt
+    });
+  } catch (err) {
+    res.json({ blocked: false });
+  }
+});
+
 // @route   GET api/auth/pending
 // @desc    Get all users pending approval (Admin only)
 router.get('/pending', isAdmin, async (req, res) => {

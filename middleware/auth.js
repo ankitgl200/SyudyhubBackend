@@ -85,6 +85,7 @@ async function auth(req, res, next) {
       } else {
         return res.status(403).json({
           blocked: true,
+          userId: user._id,
           code: 'ACCOUNT_SECURITY_LOCKDOWN',
           message: 'Your account has been suspended by the StudyMyte AI Security Sentinel due to repeated security policy violations.',
           banCount: user.banCount || 1,
