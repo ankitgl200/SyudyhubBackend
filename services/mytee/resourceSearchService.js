@@ -426,7 +426,7 @@ async function searchResources(params = {}, userContext = null) {
         folderPath: fullFolderBreadcrumb || 'Study Repository',
         year: doc.year || 'All Years',
         branch: doc.examIdentity?.branch || 'Engineering',
-        viewUrl: doc.fileUrl,
+        viewUrl: `/api/documents/download/${doc._id}`,
         downloadUrl: `/api/documents/download/${doc._id}`,
         navigationUrl: routePath,
         createdAt: doc.createdAt
