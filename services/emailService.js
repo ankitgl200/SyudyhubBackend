@@ -13,6 +13,22 @@ function maskEmail(email) {
   return local.slice(0, 2) + '***' + local.slice(-1) + '@' + domain;
 }
 
+function recordEmailDispatch(purpose, cleanEmail, templateId) {
+  try {
+    const { EmailDispatchLog } = require('../db/models');
+    EmailDispatchLog.create({
+      purpose: purpose || 'otp',
+      recipientMasked: maskEmail(cleanEmail),
+      serviceId: config.EMAILJS.SERVICE_ID,
+      templateId: templateId || config.EMAILJS.TEMPLATE_ID,
+      status: 'sent',
+      sentAt: new Date()
+    }).catch(err => console.warn('[EmailService] Dispatch logging notice:', err.message));
+  } catch (err) {
+    // Non-fatal
+  }
+}
+
 /**
  * Server-Side Email Dispatcher using EmailJS REST API.
  * The browser NEVER initiates or modifies this call.
@@ -69,6 +85,7 @@ async function sendOtpEmail({ email, name, otp, purpose = 'password_reset' }) {
 
     // Security audit log (NEVER log plaintext OTP)
     console.log(`[Security Audit] OTP email dispatched via EmailJS to ${maskEmail(cleanEmail)} for purpose: ${purpose}`);
+    recordEmailDispatch(purpose, cleanEmail, config.EMAILJS.TEMPLATE_ID);
 
     return {
       success: true,
@@ -121,6 +138,8 @@ async function sendEmailJs(serviceId, templateId, templateParams = {}) {
     console.error(`[EmailService] Provider returned HTTP ${response.status} for ${maskEmail(cleanEmail)}: ${responseText}`);
     throw new Error(`EmailJS failed to dispatch email (HTTP ${response.status}).`);
   }
+
+  recordEmailDispatch('general', cleanEmail, templateId);
 
   return {
     success: true,

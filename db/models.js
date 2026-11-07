@@ -569,8 +569,20 @@ const SystemSettingSchema = new Schema({
 });
 const SystemSetting = mongoose.model('SystemSetting', SystemSettingSchema);
 
+// Permanent EmailJS Dispatch Log (Audited Monthly Usage)
+const EmailDispatchLogSchema = new Schema({
+  purpose: { type: String, default: 'otp' },
+  recipientMasked: { type: String, default: '' },
+  serviceId: { type: String, default: '' },
+  templateId: { type: String, default: '' },
+  status: { type: String, enum: ['sent', 'failed'], default: 'sent' },
+  sentAt: { type: Date, default: Date.now, index: true }
+}, { timestamps: true });
+const EmailDispatchLog = mongoose.model('EmailDispatchLog', EmailDispatchLogSchema);
+
 module.exports.TeamMember = TeamMember;
 module.exports.SystemSetting = SystemSetting;
+module.exports.EmailDispatchLog = EmailDispatchLog;
 
 // ==========================================
 // MYTEE — Intelligent Assistant Schema Suite

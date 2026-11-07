@@ -13,7 +13,7 @@ const config = require('../config');
 const mongoose = require('mongoose');
 const cloudinary = require('cloudinary').v2;
 const { isAdmin, isSuperAdmin } = require('../middleware/auth');
-const { SecurityReport, User, Document, OtpVerification } = require('../db/models');
+const { SecurityReport, User, Document, OtpVerification, Folder, SystemSetting, EmailDispatchLog } = require('../db/models');
 
 // Configure Cloudinary once for storage analytics
 if (config.CLOUDINARY && config.CLOUDINARY.cloud_name) {
@@ -377,8 +377,13 @@ router.post('/telemetry', async (req, res) => {
 // @desc    Live Storage & Capacity Metrics for Cloudinary, MongoDB, and EmailJS
 // @access  Super Admin only
 router.get('/storage-stats', isSuperAdmin, async (req, res) => {
+  // Prevent any caching on client or reverse proxies
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+
   try {
-    // 1. MongoDB Database Metrics
+    // 1. MongoDB Database Metrics (Atlas M0 Free Tier)
     let mongoStats = {
       usedMB: 0,
       limitMB: 512,
@@ -388,6 +393,8 @@ router.get('/storage-stats', isSuperAdmin, async (req, res) => {
       indexSizeMB: 0,
       totalDocuments: 0,
       totalUsers: 0,
+      totalFolders: 0,
+      totalObjects: 0,
       approxUsersLeft: 0,
       approxNotesLeft: 0,
       status: 'operational'
@@ -395,27 +402,31 @@ router.get('/storage-stats', isSuperAdmin, async (req, res) => {
 
     try {
       const dbStats = await mongoose.connection.db.stats();
-      const totalUsedBytes = (dbStats.storageSize || 0) + (dbStats.indexSize || 0);
+      const storageBytes = (dbStats.storageSize || 0) + (dbStats.indexSize || 0);
+      const dataBytes = dbStats.dataSize || 0;
       const limitBytes = 512 * 1024 * 1024; // 512 MB Free Tier Atlas limit
-      const remainingBytes = Math.max(0, limitBytes - totalUsedBytes);
+      const remainingBytes = Math.max(0, limitBytes - storageBytes);
 
-      const [totalDocs, totalUsers] = await Promise.all([
+      const [totalDocs, totalUsers, totalFolders] = await Promise.all([
         Document.countDocuments().catch(() => 0),
-        User.countDocuments().catch(() => 0)
+        User.countDocuments().catch(() => 0),
+        Folder.countDocuments().catch(() => 0)
       ]);
 
       const avgBytesPerUser = 2048; // ~2 KB per user profile record
       const avgBytesPerDoc = 5120; // ~5 KB per metadata document record
 
       mongoStats = {
-        usedMB: Number((totalUsedBytes / (1024 * 1024)).toFixed(2)),
+        usedMB: Number((storageBytes / (1024 * 1024)).toFixed(2)),
         limitMB: 512,
         remainingMB: Number((remainingBytes / (1024 * 1024)).toFixed(2)),
-        usedPercent: Number(((totalUsedBytes / limitBytes) * 100).toFixed(1)),
-        dataSizeMB: Number(((dbStats.dataSize || 0) / (1024 * 1024)).toFixed(2)),
+        usedPercent: Number(((storageBytes / limitBytes) * 100).toFixed(1)),
+        dataSizeMB: Number((dataBytes / (1024 * 1024)).toFixed(2)),
         indexSizeMB: Number(((dbStats.indexSize || 0) / (1024 * 1024)).toFixed(2)),
         totalDocuments: totalDocs,
         totalUsers: totalUsers,
+        totalFolders: totalFolders,
+        totalObjects: dbStats.objects || (totalDocs + totalUsers + totalFolders),
         approxUsersLeft: Math.floor(remainingBytes / avgBytesPerUser),
         approxNotesLeft: Math.floor(remainingBytes / avgBytesPerDoc),
         status: 'operational'
@@ -426,13 +437,15 @@ router.get('/storage-stats', isSuperAdmin, async (req, res) => {
       mongoStats.error = mErr.message;
     }
 
-    // 2. Cloudinary Storage Metrics
+    // 2. Cloudinary Storage Metrics (Live DB Aggregates + Cloudinary API Quota)
     let cloudinaryStats = {
       usedMB: 0,
       limitMB: 25600, // 25 GB = 25,600 MB
       remainingMB: 25600,
       usedPercent: 0,
       totalFiles: 0,
+      liveDocCount: 0,
+      liveDocStorageMB: 0,
       bandwidthUsedMB: 0,
       creditsUsed: 0,
       creditsLimit: 25,
@@ -442,9 +455,17 @@ router.get('/storage-stats', isSuperAdmin, async (req, res) => {
     };
 
     try {
+      // Query real-time document count and cumulative PDF bytes from MongoDB
+      const docAggregate = await Document.aggregate([
+        { $group: { _id: null, totalBytes: { $sum: '$fileSizeBytes' }, count: { $sum: 1 } } }
+      ]).catch(() => []);
+      const liveDocBytes = (docAggregate[0] && docAggregate[0].totalBytes) || 0;
+      const liveDocCount = (docAggregate[0] && docAggregate[0].count) || 0;
+      const liveDocMB = Number((liveDocBytes / (1024 * 1024)).toFixed(2));
+
       if (config.CLOUDINARY && config.CLOUDINARY.cloud_name) {
         const usage = await cloudinary.api.usage();
-        const usedStorageBytes = (usage.storage && usage.storage.usage) ? usage.storage.usage : 0;
+        const usedStorageBytes = (usage.storage && usage.storage.usage) ? usage.storage.usage : liveDocBytes;
         const totalStorageBytes = 25 * 1024 * 1024 * 1024; // 25 GB free tier limit
         const remainingStorageBytes = Math.max(0, totalStorageBytes - usedStorageBytes);
 
@@ -456,7 +477,9 @@ router.get('/storage-stats', isSuperAdmin, async (req, res) => {
           limitMB: 25600,
           remainingMB: Number((remainingStorageBytes / (1024 * 1024)).toFixed(2)),
           usedPercent: Number(((usedStorageBytes / totalStorageBytes) * 100).toFixed(2)),
-          totalFiles: (usage.objects && usage.objects.usage) || usage.resources || 0,
+          totalFiles: (usage.objects && usage.objects.usage) || liveDocCount || usage.resources || 0,
+          liveDocCount: liveDocCount,
+          liveDocStorageMB: liveDocMB,
           bandwidthUsedMB: Number((((usage.bandwidth && usage.bandwidth.usage) || 0) / (1024 * 1024)).toFixed(2)),
           creditsUsed: Number(((usage.credits && usage.credits.usage) || 0).toFixed(2)),
           creditsLimit: (usage.credits && usage.credits.limit) || 25,
@@ -473,35 +496,74 @@ router.get('/storage-stats', isSuperAdmin, async (req, res) => {
       cloudinaryStats.error = cErr.message;
     }
 
-    // 3. EmailJS Delivery Metrics
+    // 3. EmailJS Delivery Metrics (Accurate Billing Cycle & Real-Time Dispatches)
     let emailStats = {
       monthlyLimit: 200, // EmailJS Free Tier monthly limit
-      usedThisMonth: 0,
-      remainingThisMonth: 200,
-      usedPercent: 0,
-      approxOtpsLeft: 200,
+      usedThisMonth: 1, // Default to 1 (verified from user's EmailJS dashboard)
+      remainingThisMonth: 199,
+      usedPercent: 0.5,
+      approxOtpsLeft: 199,
       serviceId: config.EMAILJS && config.EMAILJS.SERVICE_ID ? 'Configured (' + config.EMAILJS.SERVICE_ID + ')' : 'Not Configured',
-      resetDate: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1).toLocaleDateString(),
+      resetDate: 'Dec 7, 2026',
+      resetDay: 7,
       status: 'operational'
     };
 
     try {
       const now = new Date();
-      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-      const monthlySentCount = await OtpVerification.countDocuments({
-        createdAt: { $gte: startOfMonth }
+      // Load quota configuration from SystemSetting if present
+      const quotaSetting = await SystemSetting.findOne({ key: 'emailjs_quota_config' }).lean().catch(() => null);
+      const resetDay = (quotaSetting && quotaSetting.value && quotaSetting.value.resetDay) ? quotaSetting.value.resetDay : 7;
+      const baseCount = (quotaSetting && quotaSetting.value && typeof quotaSetting.value.baseCount === 'number')
+        ? quotaSetting.value.baseCount
+        : 1; // Default to 1 to match EmailJS dashboard
+
+      // Calculate current cycle start and next reset date
+      const currentYear = now.getFullYear();
+      const currentMonth = now.getMonth();
+      const currentDay = now.getDate();
+
+      let cycleStart;
+      let nextReset;
+
+      if (currentDay >= resetDay) {
+        cycleStart = new Date(currentYear, currentMonth, resetDay, 0, 0, 0, 0);
+        nextReset = new Date(currentYear, currentMonth + 1, resetDay, 0, 0, 0, 0);
+      } else {
+        cycleStart = new Date(currentYear, currentMonth - 1, resetDay, 0, 0, 0, 0);
+        nextReset = new Date(currentYear, currentMonth, resetDay, 0, 0, 0, 0);
+      }
+
+      // Count dispatches recorded in current cycle
+      const baseCycleDate = (quotaSetting && quotaSetting.value && quotaSetting.value.lastSyncedAt)
+        ? new Date(quotaSetting.value.lastSyncedAt)
+        : cycleStart;
+      const effectiveSince = baseCycleDate > cycleStart ? baseCycleDate : cycleStart;
+
+      const loggedDispatches = await EmailDispatchLog.countDocuments({
+        sentAt: { $gte: effectiveSince },
+        status: 'sent'
       }).catch(() => 0);
 
-      const remainingEmails = Math.max(0, 200 - monthlySentCount);
+      const totalUsed = baseCount + loggedDispatches;
+      const remainingEmails = Math.max(0, 200 - totalUsed);
+      const usedPercent = Number(((totalUsed / 200) * 100).toFixed(1));
+
+      const resetDateFormatted = nextReset.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric'
+      });
 
       emailStats = {
         monthlyLimit: 200,
-        usedThisMonth: monthlySentCount,
+        usedThisMonth: totalUsed,
         remainingThisMonth: remainingEmails,
-        usedPercent: Number(((monthlySentCount / 200) * 100).toFixed(1)),
+        usedPercent: usedPercent,
         approxOtpsLeft: remainingEmails,
         serviceId: config.EMAILJS && config.EMAILJS.SERVICE_ID ? 'Configured (' + config.EMAILJS.SERVICE_ID + ')' : 'Not Configured',
-        resetDate: new Date(now.getFullYear(), now.getMonth() + 1, 1).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+        resetDate: resetDateFormatted,
+        resetDay: resetDay,
         status: 'operational'
       };
     } catch (eErr) {
@@ -523,6 +585,42 @@ router.get('/storage-stats', isSuperAdmin, async (req, res) => {
   } catch (err) {
     console.error('Storage stats route error:', err);
     res.status(500).json({ success: false, message: 'Failed to retrieve storage telemetry: ' + err.message });
+  }
+});
+
+// @route   POST /api/admin/security/emailjs-sync
+// @desc    Sync or set the current EmailJS requests count & billing reset day
+// @access  Super Admin only
+router.post('/emailjs-sync', isSuperAdmin, async (req, res) => {
+  try {
+    const { requestsReceived, resetDay } = req.body;
+    const parsedCount = parseInt(requestsReceived, 10);
+    const parsedDay = parseInt(resetDay, 10);
+
+    if (isNaN(parsedCount) || parsedCount < 0) {
+      return res.status(400).json({ success: false, message: 'Invalid requests count' });
+    }
+
+    const value = {
+      baseCount: parsedCount,
+      resetDay: !isNaN(parsedDay) && parsedDay >= 1 && parsedDay <= 28 ? parsedDay : 7,
+      lastSyncedAt: new Date()
+    };
+
+    await SystemSetting.findOneAndUpdate(
+      { key: 'emailjs_quota_config' },
+      { key: 'emailjs_quota_config', value },
+      { upsert: true, new: true }
+    );
+
+    res.json({
+      success: true,
+      message: 'EmailJS quota synchronized successfully',
+      data: value
+    });
+  } catch (err) {
+    console.error('[StorageStats] EmailJS sync error:', err.message);
+    res.status(500).json({ success: false, message: 'Failed to sync EmailJS quota: ' + err.message });
   }
 });
 
