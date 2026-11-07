@@ -273,6 +273,31 @@ router.get('/public-stats', async (req, res) => {
   }
 });
 
+// @route   POST api/documents/auto-extract-meta
+// @desc    Smart AI Document Auto-Fill & Metadata Extractor for Upload & Contribute Modals
+router.post('/auto-extract-meta', auth, async (req, res) => {
+  try {
+    const { fileName, extractedText, currentCategory, currentFolderId, currentFolderName } = req.body || {};
+    if (!fileName && !extractedText) {
+      return res.status(400).json({ success: false, message: 'Filename or extracted text is required' });
+    }
+
+    const { extractMetadata } = require('../services/autoMetaExtractorService');
+    const meta = await extractMetadata({
+      fileName,
+      extractedText,
+      currentCategory,
+      currentFolderId,
+      currentFolderName
+    });
+
+    res.json({ success: true, meta });
+  } catch (err) {
+    console.error('[DocumentAutoMeta] Extraction error:', err);
+    res.status(500).json({ success: false, message: 'Failed to extract metadata: ' + err.message });
+  }
+});
+
 // @route   GET api/documents
 // @desc    Get documents, optional filters by type, folderId, subject, year (requires auth)
 router.get('/', auth, async (req, res) => {
