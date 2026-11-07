@@ -10,8 +10,19 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const config = require('../config');
-const { isAdmin } = require('../middleware/auth');
-const { SecurityReport, User } = require('../db/models');
+const mongoose = require('mongoose');
+const cloudinary = require('cloudinary').v2;
+const { isAdmin, isSuperAdmin } = require('../middleware/auth');
+const { SecurityReport, User, Document, OtpVerification } = require('../db/models');
+
+// Configure Cloudinary once for storage analytics
+if (config.CLOUDINARY && config.CLOUDINARY.cloud_name) {
+  cloudinary.config({
+    cloud_name: config.CLOUDINARY.cloud_name,
+    api_key: config.CLOUDINARY.api_key,
+    api_secret: config.CLOUDINARY.api_secret
+  });
+}
 
 // Custom flexible auth for PDF downloads (Supports query param token e.g. ?token=...)
 async function adminOrTokenAuth(req, res, next) {
@@ -359,6 +370,159 @@ router.post('/telemetry', async (req, res) => {
   } catch (err) {
     console.error('Telemetry report error:', err);
     res.status(500).json({ success: false, message: 'Telemetry error' });
+  }
+});
+
+// @route   GET /api/admin/security/storage-stats
+// @desc    Live Storage & Capacity Metrics for Cloudinary, MongoDB, and EmailJS
+// @access  Super Admin only
+router.get('/storage-stats', isSuperAdmin, async (req, res) => {
+  try {
+    // 1. MongoDB Database Metrics
+    let mongoStats = {
+      usedMB: 0,
+      limitMB: 512,
+      remainingMB: 512,
+      usedPercent: 0,
+      dataSizeMB: 0,
+      indexSizeMB: 0,
+      totalDocuments: 0,
+      totalUsers: 0,
+      approxUsersLeft: 0,
+      approxNotesLeft: 0,
+      status: 'operational'
+    };
+
+    try {
+      const dbStats = await mongoose.connection.db.stats();
+      const totalUsedBytes = (dbStats.storageSize || 0) + (dbStats.indexSize || 0);
+      const limitBytes = 512 * 1024 * 1024; // 512 MB Free Tier Atlas limit
+      const remainingBytes = Math.max(0, limitBytes - totalUsedBytes);
+
+      const [totalDocs, totalUsers] = await Promise.all([
+        Document.countDocuments().catch(() => 0),
+        User.countDocuments().catch(() => 0)
+      ]);
+
+      const avgBytesPerUser = 2048; // ~2 KB per user profile record
+      const avgBytesPerDoc = 5120; // ~5 KB per metadata document record
+
+      mongoStats = {
+        usedMB: Number((totalUsedBytes / (1024 * 1024)).toFixed(2)),
+        limitMB: 512,
+        remainingMB: Number((remainingBytes / (1024 * 1024)).toFixed(2)),
+        usedPercent: Number(((totalUsedBytes / limitBytes) * 100).toFixed(1)),
+        dataSizeMB: Number(((dbStats.dataSize || 0) / (1024 * 1024)).toFixed(2)),
+        indexSizeMB: Number(((dbStats.indexSize || 0) / (1024 * 1024)).toFixed(2)),
+        totalDocuments: totalDocs,
+        totalUsers: totalUsers,
+        approxUsersLeft: Math.floor(remainingBytes / avgBytesPerUser),
+        approxNotesLeft: Math.floor(remainingBytes / avgBytesPerDoc),
+        status: 'operational'
+      };
+    } catch (mErr) {
+      console.error('[StorageStats] MongoDB stats error:', mErr.message);
+      mongoStats.status = 'warning';
+      mongoStats.error = mErr.message;
+    }
+
+    // 2. Cloudinary Storage Metrics
+    let cloudinaryStats = {
+      usedMB: 0,
+      limitMB: 25600, // 25 GB = 25,600 MB
+      remainingMB: 25600,
+      usedPercent: 0,
+      totalFiles: 0,
+      bandwidthUsedMB: 0,
+      creditsUsed: 0,
+      creditsLimit: 25,
+      approxPdfsLeft: 0,
+      avgPdfSizeMB: 2.5,
+      status: 'operational'
+    };
+
+    try {
+      if (config.CLOUDINARY && config.CLOUDINARY.cloud_name) {
+        const usage = await cloudinary.api.usage();
+        const usedStorageBytes = (usage.storage && usage.storage.usage) ? usage.storage.usage : 0;
+        const totalStorageBytes = 25 * 1024 * 1024 * 1024; // 25 GB free tier limit
+        const remainingStorageBytes = Math.max(0, totalStorageBytes - usedStorageBytes);
+
+        const avgPdfBytes = 2.5 * 1024 * 1024; // ~2.5 MB average college lecture note PDF
+        const approxPdfsLeft = Math.floor(remainingStorageBytes / avgPdfBytes);
+
+        cloudinaryStats = {
+          usedMB: Number((usedStorageBytes / (1024 * 1024)).toFixed(2)),
+          limitMB: 25600,
+          remainingMB: Number((remainingStorageBytes / (1024 * 1024)).toFixed(2)),
+          usedPercent: Number(((usedStorageBytes / totalStorageBytes) * 100).toFixed(2)),
+          totalFiles: (usage.objects && usage.objects.usage) || usage.resources || 0,
+          bandwidthUsedMB: Number((((usage.bandwidth && usage.bandwidth.usage) || 0) / (1024 * 1024)).toFixed(2)),
+          creditsUsed: Number(((usage.credits && usage.credits.usage) || 0).toFixed(2)),
+          creditsLimit: (usage.credits && usage.credits.limit) || 25,
+          approxPdfsLeft: approxPdfsLeft,
+          avgPdfSizeMB: 2.5,
+          status: 'operational'
+        };
+      } else {
+        cloudinaryStats.status = 'not_configured';
+      }
+    } catch (cErr) {
+      console.error('[StorageStats] Cloudinary error:', cErr.message);
+      cloudinaryStats.status = 'error';
+      cloudinaryStats.error = cErr.message;
+    }
+
+    // 3. EmailJS Delivery Metrics
+    let emailStats = {
+      monthlyLimit: 200, // EmailJS Free Tier monthly limit
+      usedThisMonth: 0,
+      remainingThisMonth: 200,
+      usedPercent: 0,
+      approxOtpsLeft: 200,
+      serviceId: config.EMAILJS && config.EMAILJS.SERVICE_ID ? 'Configured (' + config.EMAILJS.SERVICE_ID + ')' : 'Not Configured',
+      resetDate: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1).toLocaleDateString(),
+      status: 'operational'
+    };
+
+    try {
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const monthlySentCount = await OtpVerification.countDocuments({
+        createdAt: { $gte: startOfMonth }
+      }).catch(() => 0);
+
+      const remainingEmails = Math.max(0, 200 - monthlySentCount);
+
+      emailStats = {
+        monthlyLimit: 200,
+        usedThisMonth: monthlySentCount,
+        remainingThisMonth: remainingEmails,
+        usedPercent: Number(((monthlySentCount / 200) * 100).toFixed(1)),
+        approxOtpsLeft: remainingEmails,
+        serviceId: config.EMAILJS && config.EMAILJS.SERVICE_ID ? 'Configured (' + config.EMAILJS.SERVICE_ID + ')' : 'Not Configured',
+        resetDate: new Date(now.getFullYear(), now.getMonth() + 1, 1).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+        status: 'operational'
+      };
+    } catch (eErr) {
+      console.error('[StorageStats] EmailJS count error:', eErr.message);
+      emailStats.status = 'warning';
+      emailStats.error = eErr.message;
+    }
+
+    return res.json({
+      success: true,
+      timestamp: new Date().toISOString(),
+      superAdminAuthorized: true,
+      data: {
+        mongodb: mongoStats,
+        cloudinary: cloudinaryStats,
+        emailjs: emailStats
+      }
+    });
+  } catch (err) {
+    console.error('Storage stats route error:', err);
+    res.status(500).json({ success: false, message: 'Failed to retrieve storage telemetry: ' + err.message });
   }
 });
 
