@@ -593,8 +593,9 @@ router.get('/storage-stats', isSuperAdmin, async (req, res) => {
 // @access  Super Admin only
 router.post('/emailjs-sync', isSuperAdmin, async (req, res) => {
   try {
-    const { requestsReceived, resetDay } = req.body;
-    const parsedCount = parseInt(requestsReceived, 10);
+    const { requestsReceived, baseCount, resetDay } = req.body;
+    const countToParse = requestsReceived !== undefined ? requestsReceived : baseCount;
+    const parsedCount = parseInt(countToParse, 10);
     const parsedDay = parseInt(resetDay, 10);
 
     if (isNaN(parsedCount) || parsedCount < 0) {
