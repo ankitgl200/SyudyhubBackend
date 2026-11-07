@@ -390,7 +390,15 @@ router.post('/upload', isStaff, (req, res) => {
     }
 
     // Support either direct file URL from frontend OR local file upload
-    const { title, type, folderId, subject, year, fileUrl: directFileUrl, fileName: directFileName } = req.body;
+    let { title, type, folderId, subject, year, fileUrl: directFileUrl, fileName: directFileName } = req.body;
+
+    // Normalize type (support both singular and plural forms from frontend)
+    let normalizedType = (type || '').trim().toLowerCase();
+    if (normalizedType === 'papers') normalizedType = 'paper';
+    if (normalizedType === 'lab_manuals') normalizedType = 'lab_manual';
+    if (normalizedType === 'books') normalizedType = 'book';
+    if (normalizedType === 'simulations') normalizedType = 'roadmap';
+    type = normalizedType;
 
     if (!req.file && !directFileUrl) {
       return res.status(400).json({ message: 'Please upload a PDF file or provide a file URL' });
