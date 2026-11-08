@@ -310,7 +310,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'admin_manage_content',
-    description: 'ADMIN/SUPERADMIN ONLY: Manage official website content including Announcements (create, edit, delete) and Uploaded Documents (list pending, approve, reject, edit, delete).',
+    description: 'ADMIN/SUPERADMIN ONLY: Manage official website content including Announcements (create, edit, delete) and Uploaded Documents (list pending, approve, reject, edit, delete, search).',
     parameters: {
       type: 'OBJECT',
       properties: {
@@ -321,7 +321,7 @@ const TOOL_DEFINITIONS = [
         },
         action: {
           type: 'STRING',
-          enum: ['create', 'edit', 'delete', 'list', 'list_pending', 'approve', 'reject'],
+          enum: ['create', 'edit', 'delete', 'list', 'list_pending', 'approve', 'reject', 'search'],
           description: 'Action to perform on content'
         },
         id: {
@@ -344,12 +344,82 @@ const TOOL_DEFINITIONS = [
           type: 'STRING',
           description: 'Academic year for document'
         },
+        uploadedBy: {
+          type: 'STRING',
+          description: 'Name of the uploader (e.g. "Ankit Ghugtyal", "StudyMyte Team")'
+        },
         docUrl: {
           type: 'STRING',
           description: 'Optional document attachment URL'
         }
       },
       required: ['contentType', 'action']
+    }
+  },
+  {
+    name: 'admin_batch_update_document_metadata',
+    description: 'ADMIN/SUPERADMIN ONLY: Powerful bulk metadata editor across site files. Search, filter, and batch update metadata like "uploadedBy" (e.g. changing all files with uploadedBy "Ankit Ghugtyal" to "StudyMyte Team"), subject, year, or title. Produces an executive report of total files, matched files, and updated items.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        filter: {
+          type: 'OBJECT',
+          description: 'Criteria to find files to update (supports regex/case-insensitive matching)',
+          properties: {
+            uploadedBy: {
+              type: 'STRING',
+              description: 'Filter by current uploader name (e.g. "Ankit Ghugtyal", "Alice")'
+            },
+            subject: {
+              type: 'STRING',
+              description: 'Filter by subject name'
+            },
+            year: {
+              type: 'STRING',
+              description: 'Filter by academic year'
+            },
+            type: {
+              type: 'STRING',
+              description: 'Filter by document type (notes, paper, lab_manual, book, etc.)'
+            },
+            query: {
+              type: 'STRING',
+              description: 'General search keyword across title, filename, subject, or uploader'
+            }
+          }
+        },
+        updates: {
+          type: 'OBJECT',
+          description: 'New metadata values to apply to all matching files',
+          properties: {
+            uploadedBy: {
+              type: 'STRING',
+              description: 'New uploader name to display (e.g. "StudyMyte Team", "Faculty Member")'
+            },
+            subject: {
+              type: 'STRING',
+              description: 'New subject name'
+            },
+            year: {
+              type: 'STRING',
+              description: 'New academic year'
+            },
+            title: {
+              type: 'STRING',
+              description: 'New document title'
+            },
+            type: {
+              type: 'STRING',
+              description: 'New document type'
+            }
+          }
+        },
+        dryRun: {
+          type: 'BOOLEAN',
+          description: 'If true, only previews which files match and would change without modifying database. Default false.'
+        }
+      },
+      required: ['filter', 'updates']
     }
   },
   {
@@ -777,6 +847,13 @@ async function executeTool(name, args = {}, userContext = null) {
         return await adminSuperpowers.manageDocument(args, userContext);
       }
       return { success: false, error: 'Invalid content type' };
+    }
+
+    case 'admin_batch_update_document_metadata': {
+      if (!userContext || (userContext.role !== 'admin' && userContext.role !== 'superadmin')) {
+        return { success: false, error: 'Access denied: Administrative privileges required.' };
+      }
+      return await adminSuperpowers.batchUpdateDocumentMetadata(args, userContext);
     }
 
     case 'admin_send_user_communication': {

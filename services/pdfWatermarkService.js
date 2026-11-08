@@ -160,3 +160,4 @@ async function applyStudyMyteWatermark(input) {
 module.exports = {
   applyStudyMyteWatermark
 };
+

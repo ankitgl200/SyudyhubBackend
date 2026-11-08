@@ -525,9 +525,9 @@ async function manageAnnouncement({ action, id, title, content, docUrl }, userCo
 }
 
 /**
- * Full CRUD for Uploaded Documents (Approve, Edit, Delete, List Pending)
+ * Full CRUD for Uploaded Documents (Approve, Edit, Delete, List Pending, Search)
  */
-async function manageDocument({ action, id, title, subject, year, status }, userContext) {
+async function manageDocument({ action, id, title, subject, year, status, uploadedBy, query }, userContext) {
   verifyAdmin(userContext);
 
   switch (action) {
@@ -550,6 +550,41 @@ async function manageDocument({ action, id, title, subject, year, status }, user
           uploadedByUserId: d.uploadedByUserId,
           createdAt: d.createdAt,
           fileUrl: d.fileUrl
+        }))
+      };
+    }
+
+    case 'search': {
+      const q = {};
+      if (uploadedBy && typeof uploadedBy === 'string') {
+        q.uploadedBy = new RegExp(uploadedBy.trim(), 'i');
+      }
+      if (subject && typeof subject === 'string') {
+        q.subject = new RegExp(subject.trim(), 'i');
+      }
+      if (year && typeof year === 'string') {
+        q.year = year.trim();
+      }
+      if (status && typeof status === 'string') {
+        q.status = status.trim();
+      }
+      if (query && typeof query === 'string') {
+        const qRegex = new RegExp(query.trim(), 'i');
+        q.$or = [{ title: qRegex }, { fileName: qRegex }, { subject: qRegex }, { uploadedBy: qRegex }];
+      }
+
+      const docs = await Document.find(q).sort({ createdAt: -1 }).limit(50).lean();
+      return {
+        success: true,
+        count: docs.length,
+        documents: docs.map(d => ({
+          id: d._id.toString(),
+          title: d.title,
+          type: d.type,
+          subject: d.subject || 'N/A',
+          year: d.year || 'N/A',
+          uploadedBy: d.uploadedBy || 'N/A',
+          createdAt: d.createdAt
         }))
       };
     }
@@ -601,6 +636,7 @@ async function manageDocument({ action, id, title, subject, year, status }, user
       if (subject) update.subject = subject.trim();
       if (year) update.year = year.trim();
       if (status) update.status = status;
+      if (uploadedBy) update.uploadedBy = uploadedBy.trim();
 
       const updated = await Document.findByIdAndUpdate(id, update, { new: true });
       if (!updated) throw new Error('Document not found.');
@@ -626,6 +662,195 @@ async function manageDocument({ action, id, title, subject, year, status }, user
     default:
       throw new Error(`Unsupported document management action: ${action}`);
   }
+}
+
+/**
+ * Batch Update Document Metadata Superpower
+ * Scans, filters, and batch updates document metadata (uploadedBy, subject, year, title, status)
+ * and generates a comprehensive executive audit report for the Admin.
+ */
+async function batchUpdateDocumentMetadata({ filter = {}, updates = {}, dryRun = false }, userContext) {
+  verifyAdmin(userContext);
+
+  if (!filter || typeof filter !== 'object') {
+    throw new Error('A valid filter object is required.');
+  }
+  if (!updates || typeof updates !== 'object' || Object.keys(updates).length === 0) {
+    throw new Error('At least one field to update must be specified (e.g. uploadedBy, subject, year, type).');
+  }
+
+  // Build MongoDB query
+  const query = {};
+
+  if (filter.uploadedBy && typeof filter.uploadedBy === 'string') {
+    const escaped = filter.uploadedBy.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    query.uploadedBy = new RegExp(escaped, 'i');
+  }
+
+  if (filter.uploadedByUserId) {
+    query.uploadedByUserId = filter.uploadedByUserId;
+  }
+
+  if (filter.subject && typeof filter.subject === 'string') {
+    const escapedSub = filter.subject.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    query.subject = new RegExp(escapedSub, 'i');
+  }
+
+  if (filter.year && typeof filter.year === 'string') {
+    query.year = filter.year.trim();
+  }
+
+  if (filter.type && typeof filter.type === 'string') {
+    query.type = filter.type.trim().toLowerCase();
+  }
+
+  if (filter.status && typeof filter.status === 'string') {
+    query.status = filter.status.trim().toLowerCase();
+  }
+
+  if (filter.documentIds && Array.isArray(filter.documentIds) && filter.documentIds.length > 0) {
+    query._id = { $in: filter.documentIds };
+  }
+
+  if (filter.query && typeof filter.query === 'string') {
+    const qEscaped = filter.query.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const qRegex = new RegExp(qEscaped, 'i');
+    query.$or = [
+      { title: qRegex },
+      { fileName: qRegex },
+      { subject: qRegex },
+      { uploadedBy: qRegex }
+    ];
+  }
+
+  // Count total documents in system
+  const totalFilesInSystem = await Document.countDocuments().catch(() => 0);
+
+  // Fetch all matching documents
+  const matchingDocs = await Document.find(query).sort({ createdAt: -1 }).lean();
+  const totalMatched = matchingDocs.length;
+
+  if (totalMatched === 0) {
+    return {
+      success: true,
+      dryRun: !!dryRun,
+      totalFilesInSystem,
+      totalMatched: 0,
+      totalUpdated: 0,
+      filterApplied: filter,
+      updatesRequested: updates,
+      modifiedFiles: [],
+      reportSummary: `### 📄 Document Metadata Update Report\n\n- **Total Files in System:** ${totalFilesInSystem}\n- **Matching Criteria:** \`${JSON.stringify(filter)}\`\n- **Total Matched Files:** 0\n- **Total Files Modified:** 0\n\n*No files matched the specified filter criteria.*`,
+      message: `No files found matching the criteria. Total files in system: ${totalFilesInSystem}.`
+    };
+  }
+
+  // Prepare updates to apply
+  const fieldsToSet = {};
+  if (typeof updates.uploadedBy === 'string') {
+    fieldsToSet.uploadedBy = updates.uploadedBy.trim();
+  }
+  if (updates.uploadedByUserId !== undefined) {
+    fieldsToSet.uploadedByUserId = updates.uploadedByUserId;
+  }
+  if (typeof updates.subject === 'string') {
+    fieldsToSet.subject = updates.subject.trim();
+  }
+  if (typeof updates.year === 'string') {
+    fieldsToSet.year = updates.year.trim();
+  }
+  if (typeof updates.type === 'string') {
+    fieldsToSet.type = updates.type.trim().toLowerCase();
+  }
+  if (typeof updates.status === 'string') {
+    fieldsToSet.status = updates.status.trim().toLowerCase();
+  }
+  if (typeof updates.title === 'string' && updates.title.trim()) {
+    fieldsToSet.title = updates.title.trim();
+  }
+
+  const modifiedList = [];
+  const docIdsToUpdate = [];
+
+  for (const doc of matchingDocs) {
+    const changes = {};
+    for (const [key, val] of Object.entries(fieldsToSet)) {
+      const oldVal = doc[key] !== undefined ? doc[key] : 'N/A';
+      if (oldVal !== val) {
+        changes[key] = { from: oldVal, to: val };
+      }
+    }
+
+    if (Object.keys(changes).length > 0) {
+      docIdsToUpdate.push(doc._id);
+      modifiedList.push({
+        id: doc._id.toString(),
+        title: doc.title,
+        fileName: doc.fileName || doc.title,
+        type: doc.type,
+        subject: doc.subject || 'N/A',
+        year: doc.year || 'N/A',
+        oldUploadedBy: doc.uploadedBy || 'N/A',
+        changes
+      });
+    }
+  }
+
+  let totalUpdated = 0;
+  if (!dryRun && docIdsToUpdate.length > 0) {
+    const updateResult = await Document.updateMany(
+      { _id: { $in: docIdsToUpdate } },
+      { $set: fieldsToSet }
+    );
+    totalUpdated = updateResult.modifiedCount !== undefined ? updateResult.modifiedCount : docIdsToUpdate.length;
+  } else if (dryRun) {
+    totalUpdated = docIdsToUpdate.length;
+  }
+
+  // Generate a rich Markdown report
+  const reportLines = [];
+  reportLines.push(`### 📄 Document Metadata Update Report`);
+  reportLines.push(`- **Total Files in System:** ${totalFilesInSystem}`);
+  reportLines.push(`- **Matching Criteria:** \`${JSON.stringify(filter)}\``);
+  reportLines.push(`- **Total Matched Files:** ${totalMatched}`);
+  reportLines.push(`- **Total Files Modified:** **${totalUpdated}**${dryRun ? ' (PREVIEW / DRY-RUN)' : ' (SUCCESSFULLY APPLIED)'}`);
+  reportLines.push(`- **Changes Applied:** \`${JSON.stringify(fieldsToSet)}\``);
+  reportLines.push(``);
+
+  if (modifiedList.length > 0) {
+    reportLines.push(`| # | Document Title | Type | Subject | Previous Value | New Value |`);
+    reportLines.push(`|---|---|---|---|---|---|`);
+    modifiedList.slice(0, 30).forEach((item, index) => {
+      const fieldChanged = Object.keys(item.changes)[0] || 'uploadedBy';
+      const changeObj = item.changes[fieldChanged] || { from: item.oldUploadedBy, to: fieldsToSet.uploadedBy || 'N/A' };
+      reportLines.push(`| ${index + 1} | ${item.title} | ${item.type} | ${item.subject} | ${changeObj.from || 'None'} | **${changeObj.to}** |`);
+    });
+
+    if (modifiedList.length > 30) {
+      reportLines.push(``);
+      reportLines.push(`*...and ${modifiedList.length - 30} more documents updated successfully.*`);
+    }
+  } else {
+    reportLines.push(`*All matching files already had the requested metadata. No modifications were needed.*`);
+  }
+
+  const markdownReport = reportLines.join('\n');
+
+  return {
+    success: true,
+    dryRun: !!dryRun,
+    totalFilesInSystem,
+    totalMatched,
+    totalUpdated,
+    filterApplied: filter,
+    updatesApplied: fieldsToSet,
+    modifiedCount: modifiedList.length,
+    modifiedFiles: modifiedList.slice(0, 50),
+    reportSummary: markdownReport,
+    message: dryRun
+      ? `Dry-run preview: Found ${totalMatched} files. ${totalUpdated} files would be updated.`
+      : `Successfully updated metadata for ${totalUpdated} of ${totalMatched} matched files (out of ${totalFilesInSystem} total files in system).`
+  };
 }
 
 // ============================================================
@@ -766,6 +991,7 @@ module.exports = {
   resolveOrReplySupportTicket,
   manageAnnouncement,
   manageDocument,
+  batchUpdateDocumentMetadata,
   sendUserCommunication,
   generateExecutiveSiteStatusReport
 };

@@ -148,6 +148,7 @@ CORE PLATFORM RULES:
 13. ADMINISTRATIVE SUPERPOWERS (Admins & Superadmins):
    • You can inspect any user profile, view student support tickets with AI solutions, approve documents, create announcements, and generate deep real-time platform status reports.
    • SUPPORT TICKETS: When an admin requests to resolve or close a ticket (e.g. "resolve ticket 6ae6dbe375", "resolvbe this ticket"), call admin_manage_tickets with action "resolve" immediately!
+   • BATCH DOCUMENT METADATA UPDATES: When an admin asks to change or update metadata across files (e.g. changing 'uploadedBy' from "Ankit Ghugtyal" to "StudyMyte Team", or changing subject, year, title), call admin_batch_update_document_metadata. Always display the complete audit report in your response with total files in system, total matched, total updated, and the table of modified items.
    • EMAIL DISPATCH DISABLED: AI direct emailing is permanently disabled. Never claim you can send emails. For communicating with users, use official In-App Notifications (admin_send_user_communication with channel "in_app").
 `;
 
@@ -865,6 +866,38 @@ ${u.recentUploads.length > 0 ? `#### 📤 Recent Uploads by ${u.name}:\n` + u.re
     return { text, resources, actions, ticket, toolsUsed, fallback: true };
   }
 
+  // 1.10 Batch Document Metadata Update (e.g. Change uploader, rename uploader, update metadata)
+  const metaUpdateMatch = clean.match(/(?:change|update|replace|rename|reassign|badal|kardo|krdo)\s+.*?(?:uploader|uploaded\s*by|contributed\s*by|files?\s+(?:ka|ki|ke)?\s*meta\s*data|meta\s*data|file\s+details)/i) ||
+    clean.match(/(?:files?\s+(?:ka|ki|ke)?\s*meta\s*data|uploader|uploaded\s*by|contributed\s*by)\s+.*?(?:change|update|replace|rename|badal|kardo|krdo)/i) ||
+    (clean.match(/(?:ankit\s+ghugtyal|ankit)/i) && /(?:change|replace|update|remove|badal|team)/i.test(clean));
+
+  if (isAdminUser && metaUpdateMatch) {
+    toolsUsed.push('admin_batch_update_document_metadata');
+
+    let oldUploader = 'Ankit Ghugtyal';
+    if (/(?:uploaded\s*by|from|jisme)\s+([A-Za-z0-9_\s]{3,30}?)(?:\s+(?:aara|hai|ko|to|into|kux|change|badal)|$)/i.test(clean)) {
+      const matchOld = clean.match(/(?:uploaded\s*by|from|jisme)\s+([A-Za-z0-9_\s]{3,30}?)(?:\s+(?:aara|hai|ko|to|into|kux|change|badal)|$)/i);
+      if (matchOld && matchOld[1]) oldUploader = matchOld[1].trim();
+    }
+
+    let newUploader = 'StudyMyte Team';
+    const matchNew = clean.match(/(?:to|into|karke|krke|as)\s+["']?([A-Za-z0-9_\s]{3,40}?)["']?(?:\s+(?:kardo|krdo|krna|kar)|$)/i);
+    if (matchNew && matchNew[1] && !/change|update|kux|files/i.test(matchNew[1])) {
+      newUploader = matchNew[1].trim();
+    }
+
+    const reportRes = await adminSuperpowers.batchUpdateDocumentMetadata({
+      filter: { uploadedBy: oldUploader },
+      updates: { uploadedBy: newUploader },
+      dryRun: false
+    }, userContext);
+
+    text = `✅ **Document Metadata Batch Update Completed!**\n\n${reportRes.reportSummary}\n\n*Action executed securely under Administrator authority.*`;
+    actions.push({ label: 'Browse Notes', path: '/notes' });
+    actions.push({ label: 'Open Admin Dashboard', path: '/admin' });
+    return { text, resources, actions, ticket, toolsUsed, fallback: true };
+  }
+
   // 2. Greetings
   if (/^(hi|hello|hey|namaste|greetings|good\s+morning|good\s+afternoon|good\s+evening|what'?s\s+up|wassup)\b/i.test(clean)) {
     text = `👋 Hello! I am **MYTEE**, the official AI assistant of StudyMyte.\n\nI am here to help you:\n• Find lecture notes, previous-year question papers (PYQs), and lab manuals\n• View documents directly in StudyMyte's inbuilt PDF viewer\n• Navigate to any section or page on the platform\n• Troubleshoot website issues or submit support tickets\n• Answer questions about your engineering subjects and coursework\n\nWhat are you studying or looking for today?`;
@@ -1249,7 +1282,7 @@ async function generateAiResponse({ message, history = [], userContext = null, p
 
   // Fast-track Admin Operational Commands for instant, deterministic execution
   const isAdminUser = userContext && (userContext.role === 'admin' || userContext.role === 'superadmin');
-  const isAdminOperationalQuery = /(site\s+status|platform\s+health|system\s+status|executive\s+report|admin\s+stats|admin\s+report|overview\s+report|resource\s+statistics|statistics\s+overview|resource\s+overview|search\s+user|show\s+user|user\s+details|find\s+user|list\s+users|pending\s+users|pending\s+educators|approve\s+user|support\s+tickets|help\s+requests|pending\s+tickets|(?:resolve|resolvbe|close|solve|mark\s+resolved)\s+(?:the\s+)?(?:ticket|issue|request)?|(?:resolve|resolvbe|close|solve)\s+(?:this\s+)?ticket|review\s+pending|pending\s+uploads|pending\s+documents|approve\s+doc|create\s+announcement|send\s+(?:in\s*app\s*)?(?:msg|message|notification)|send\s+email|email\s+to)/i.test((message || '').trim());
+  const isAdminOperationalQuery = /(site\s+status|platform\s+health|system\s+status|executive\s+report|admin\s+stats|admin\s+report|overview\s+report|resource\s+statistics|statistics\s+overview|resource\s+overview|search\s+user|show\s+user|user\s+details|find\s+user|list\s+users|pending\s+users|pending\s+educators|approve\s+user|support\s+tickets|help\s+requests|pending\s+tickets|(?:resolve|resolvbe|close|solve|mark\s+resolved)\s+(?:the\s+)?(?:ticket|issue|request)?|(?:resolve|resolvbe|close|solve)\s+(?:this\s+)?ticket|review\s+pending|pending\s+uploads|pending\s+documents|approve\s+doc|create\s+announcement|send\s+(?:in\s*app\s*)?(?:msg|message|notification)|send\s+email|email\s+to|batch\s+update|update\s+metadata|change\s+uploader|uploaded\s*by|meta\s*data)/i.test((message || '').trim());
 
   if (isAdminUser && isAdminOperationalQuery) {
     const fallbackRes = await runLocalFallbackEngine(message, history, userContext, personalityMode);
@@ -1354,6 +1387,7 @@ Admins and Superadmins can access the AI fully, and you have direct autonomous a
 3. CONTENT CRUD: You can create, edit, or delete official announcements, and review, approve, edit, or delete uploaded documents using admin_manage_content.
 4. IN-APP MESSAGES & EMAILS: You can send in-app messages (notifications) and direct emails to specific users according to admin instructions using admin_send_user_communication.
 5. STATUS & STATS REPORT: You can generate comprehensive, real-time executive platform health and analytics reports using admin_get_site_status_report.
+6. BATCH DOCUMENT METADATA UPDATES: You can bulk update or reassign metadata (uploadedBy, subject, year, title) across site documents using admin_batch_update_document_metadata. Always display the complete audit report with total files in system, total matched, total updated, and the table of modified items.
 Execute these tools immediately when requested by the administrator to make their work fast and seamless!
 `;
           }
