@@ -12,7 +12,8 @@
  * Only users with role 'admin' or 'superadmin' can access these functions.
  */
 
-const { User, Document, Announcement, HelpRequest, Notification } = require('../../db/models');
+const { User, Document, Announcement, HelpRequest, Notification, SecurityReport } = require('../../db/models');
+const { logAction } = require('./myteeAuditLogger');
 const { getWebsiteOverview, getUserActivityAnalytics, getAiUsageAnalytics } = require('./adminAnalyticsService');
 const { getTroubleshootingGuide } = require('./websiteKnowledgeService');
 const { maskEmail } = require('../emailService');
@@ -981,6 +982,244 @@ async function generateExecutiveSiteStatusReport(userContext) {
   };
 }
 
+/**
+ * As-Instructed Bulk Delete Superpower
+ * Safely purges obsolete, seen, resolved, or requested records from MongoDB
+ * (e.g. seen notifications, old announcements, rejected documents, resolved tickets, etc.)
+ * and generates an executive deletion audit report.
+ */
+async function batchDeleteRecords({ entity, filter = {}, dryRun = false, reason = 'Admin instructed cleanup' }, userContext) {
+  verifyAdmin(userContext);
+
+  if (!entity || typeof entity !== 'string') {
+    throw new Error('Valid target entity is required (e.g. "notifications", "documents", "announcements", "help_requests", "security_reports").');
+  }
+
+  const normalizedEntity = entity.trim().toLowerCase();
+  let Model = null;
+  let entityLabel = '';
+  const query = {};
+
+  // Resolve target collection & build specific query
+  switch (normalizedEntity) {
+    case 'notifications':
+    case 'notification': {
+      Model = Notification;
+      entityLabel = 'Notifications';
+
+      // Read status filter (seen vs unread vs all)
+      if (filter.read === true || filter.seen === true || filter.status === 'read' || filter.status === 'seen') {
+        query.read = true;
+      } else if (filter.read === false || filter.seen === false || filter.status === 'unread') {
+        query.read = false;
+      }
+
+      if (filter.olderThanDays && typeof filter.olderThanDays === 'number' && filter.olderThanDays > 0) {
+        const threshold = new Date(Date.now() - filter.olderThanDays * 24 * 60 * 60 * 1000);
+        query.createdAt = { $lt: threshold };
+      }
+
+      if (filter.keyword && typeof filter.keyword === 'string') {
+        query.message = new RegExp(filter.keyword.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      }
+
+      if (filter.recipientId) {
+        query.recipientId = filter.recipientId;
+      }
+
+      // If user said "all notifications"
+      if (filter.all === true) {
+        // match everything
+      } else if (Object.keys(query).length === 0 && !filter.all) {
+        // Safety guard: default to seen notifications if no specific criteria given
+        query.read = true;
+      }
+      break;
+    }
+
+    case 'documents':
+    case 'document': {
+      Model = Document;
+      entityLabel = 'Documents';
+
+      // Safety guard: never mass delete approved documents unless explicit ID list or specific filter provided
+      if (filter.status) {
+        query.status = filter.status.trim().toLowerCase();
+      } else if (!filter.ids && !filter.query && !filter.olderThanDays && !filter.subject) {
+        // Default to rejected documents to protect approved study notes
+        query.status = 'rejected';
+      }
+
+      if (filter.subject) {
+        query.subject = new RegExp(filter.subject.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      }
+
+      if (filter.year) {
+        query.year = filter.year.trim();
+      }
+
+      if (filter.title) {
+        query.title = new RegExp(filter.title.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      }
+
+      if (filter.olderThanDays && typeof filter.olderThanDays === 'number') {
+        const threshold = new Date(Date.now() - filter.olderThanDays * 24 * 60 * 60 * 1000);
+        query.createdAt = { $lt: threshold };
+      }
+
+      if (filter.ids && Array.isArray(filter.ids) && filter.ids.length > 0) {
+        query._id = { $in: filter.ids };
+      }
+      break;
+    }
+
+    case 'announcements':
+    case 'announcement': {
+      Model = Announcement;
+      entityLabel = 'Announcements';
+
+      if (filter.olderThanDays && typeof filter.olderThanDays === 'number') {
+        const threshold = new Date(Date.now() - filter.olderThanDays * 24 * 60 * 60 * 1000);
+        query.createdAt = { $lt: threshold };
+      }
+
+      if (filter.title) {
+        query.title = new RegExp(filter.title.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      }
+
+      if (filter.ids && Array.isArray(filter.ids) && filter.ids.length > 0) {
+        query._id = { $in: filter.ids };
+      }
+      break;
+    }
+
+    case 'help_requests':
+    case 'tickets':
+    case 'support_tickets': {
+      Model = HelpRequest;
+      entityLabel = 'Help & Support Requests';
+
+      if (filter.status) {
+        query.status = filter.status.trim().toLowerCase();
+      } else if (filter.resolved === true || filter.onlyResolved !== false) {
+        // Default to resolved requests
+        query.status = 'resolved';
+      }
+
+      if (filter.olderThanDays && typeof filter.olderThanDays === 'number') {
+        const threshold = new Date(Date.now() - filter.olderThanDays * 24 * 60 * 60 * 1000);
+        query.createdAt = { $lt: threshold };
+      }
+      break;
+    }
+
+    case 'security_reports':
+    case 'threat_reports': {
+      Model = SecurityReport;
+      entityLabel = 'Security Incident Reports';
+
+      if (filter.olderThanDays && typeof filter.olderThanDays === 'number') {
+        const threshold = new Date(Date.now() - filter.olderThanDays * 24 * 60 * 60 * 1000);
+        query.createdAt = { $lt: threshold };
+      }
+      break;
+    }
+
+    default:
+      throw new Error(`Unsupported entity "${entity}". Supported entities: notifications, documents, announcements, help_requests, security_reports.`);
+  }
+
+  // Count before deletion
+  const totalInCollection = await Model.countDocuments().catch(() => 0);
+  const matchedDocs = await Model.find(query).limit(500).lean();
+  const totalMatched = matchedDocs.length;
+
+  if (totalMatched === 0) {
+    return {
+      success: true,
+      entity: entityLabel,
+      dryRun: !!dryRun,
+      totalBefore: totalInCollection,
+      totalMatched: 0,
+      totalDeleted: 0,
+      totalRemaining: totalInCollection,
+      filterApplied: query,
+      reportSummary: `### 🗑️ Data Cleanup & Deletion Report\n\n- **Target Entity:** ${entityLabel}\n- **Filter Applied:** \`${JSON.stringify(query)}\`\n- **Total Items in DB:** ${totalInCollection}\n- **Matched for Deletion:** **0**\n- **Deleted:** **0**\n\n*No records matched the criteria. No data was deleted.*`,
+      message: `No ${entityLabel.toLowerCase()} matched the deletion criteria. Total remaining in database: ${totalInCollection}.`
+    };
+  }
+
+  let totalDeleted = 0;
+  if (!dryRun) {
+    const idsToDelete = matchedDocs.map(d => d._id);
+    const deleteResult = await Model.deleteMany({ _id: { $in: idsToDelete } });
+    totalDeleted = deleteResult.deletedCount !== undefined ? deleteResult.deletedCount : idsToDelete.length;
+
+    // Log administrative action
+    await logAction({
+      adminUser: userContext,
+      action: 'BULK_DELETE_RECORDS',
+      target: entityLabel,
+      details: {
+        entity: normalizedEntity,
+        query,
+        totalMatched,
+        totalDeleted,
+        reason
+      }
+    }).catch(() => {});
+  } else {
+    totalDeleted = totalMatched;
+  }
+
+  const totalRemaining = totalInCollection - (dryRun ? 0 : totalDeleted);
+  const approxBytesPerDoc = normalizedEntity === 'documents' ? 5120 : 1024;
+  const approxKB = Math.round((totalDeleted * approxBytesPerDoc) / 1024);
+
+  // Generate structured Markdown report
+  const reportLines = [];
+  reportLines.push(`### 🗑️ Data Cleanup & Deletion Report`);
+  reportLines.push(`- **Target Entity:** **${entityLabel}**`);
+  reportLines.push(`- **Deletion Filter:** \`${JSON.stringify(query)}\``);
+  reportLines.push(`- **Total Records Before:** ${totalInCollection}`);
+  reportLines.push(`- **Matched Records:** ${totalMatched}`);
+  reportLines.push(`- **Permanently Deleted:** **${totalDeleted}**${dryRun ? ' (PREVIEW / DRY-RUN)' : ' (SUCCESSFULLY REMOVED)'}`);
+  reportLines.push(`- **Estimated Storage Recovered:** **~${approxKB} KB**`);
+  reportLines.push(`- **Remaining Records in DB:** **${totalRemaining}**`);
+  reportLines.push(``);
+
+  if (matchedDocs.length > 0) {
+    reportLines.push(`#### 📋 Purged Items Summary (Sample of ${Math.min(10, matchedDocs.length)} items):`);
+    matchedDocs.slice(0, 10).forEach((item, index) => {
+      let previewText = item.title || item.message || item.subject || `ID: ${item._id}`;
+      if (previewText.length > 60) previewText = previewText.slice(0, 57) + '...';
+      const dateStr = item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '';
+      reportLines.push(`${index + 1}. **${previewText}** (Created: ${dateStr})`);
+    });
+
+    if (matchedDocs.length > 10) {
+      reportLines.push(`*...and ${matchedDocs.length - 10} more items purged.*`);
+    }
+  }
+
+  const markdownReport = reportLines.join('\n');
+
+  return {
+    success: true,
+    entity: entityLabel,
+    dryRun: !!dryRun,
+    totalBefore: totalInCollection,
+    totalMatched,
+    totalDeleted,
+    totalRemaining,
+    filterApplied: query,
+    reportSummary: markdownReport,
+    message: dryRun
+      ? `Dry-run preview: Found ${totalMatched} ${entityLabel.toLowerCase()} that would be deleted.`
+      : `Successfully purged ${totalDeleted} ${entityLabel.toLowerCase()} from the database. ${totalRemaining} records remain.`
+  };
+}
+
 module.exports = {
   verifyAdmin,
   verifySuperAdmin,
@@ -992,6 +1231,7 @@ module.exports = {
   manageAnnouncement,
   manageDocument,
   batchUpdateDocumentMetadata,
+  batchDeleteRecords,
   sendUserCommunication,
   generateExecutiveSiteStatusReport
 };

@@ -423,6 +423,55 @@ const TOOL_DEFINITIONS = [
     }
   },
   {
+    name: 'admin_bulk_delete_records',
+    description: 'ADMIN/SUPERADMIN ONLY: Safely bulk delete, purge, or clean up obsolete, seen, or instructed records from MongoDB (e.g. deleting all seen/read notifications, old announcements, rejected documents, resolved support tickets) to keep the database tidy and prevent storage overload. Returns a full deletion and storage recovery report.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        entity: {
+          type: 'STRING',
+          enum: ['notifications', 'documents', 'announcements', 'help_requests', 'security_reports'],
+          description: 'The target collection/type to delete from: "notifications", "documents", "announcements", "help_requests", or "security_reports"'
+        },
+        filter: {
+          type: 'OBJECT',
+          description: 'Criteria to match records for deletion',
+          properties: {
+            read: {
+              type: 'BOOLEAN',
+              description: 'For notifications: true to delete read/seen notifications, false for unread'
+            },
+            status: {
+              type: 'STRING',
+              description: 'Status filter (e.g. "rejected" or "pending" for documents, "resolved" for tickets)'
+            },
+            olderThanDays: {
+              type: 'NUMBER',
+              description: 'Delete records older than this number of days'
+            },
+            keyword: {
+              type: 'STRING',
+              description: 'Search keyword in title or message'
+            },
+            all: {
+              type: 'BOOLEAN',
+              description: 'Set to true to delete all matching records of this entity'
+            }
+          }
+        },
+        dryRun: {
+          type: 'BOOLEAN',
+          description: 'Set to true to preview matched records without deleting them. Default false.'
+        },
+        reason: {
+          type: 'STRING',
+          description: 'Administrative reason for this deletion action'
+        }
+      },
+      required: ['entity']
+    }
+  },
+  {
     name: 'admin_send_user_communication',
     description: 'ADMIN/SUPERADMIN ONLY: Send an official in-app message (notification) to a specific user according to admin instructions. Note: AI email dispatching is disabled; all messages are delivered directly inside the user app and push notifications.',
     parameters: {
@@ -854,6 +903,13 @@ async function executeTool(name, args = {}, userContext = null) {
         return { success: false, error: 'Access denied: Administrative privileges required.' };
       }
       return await adminSuperpowers.batchUpdateDocumentMetadata(args, userContext);
+    }
+
+    case 'admin_bulk_delete_records': {
+      if (!userContext || (userContext.role !== 'admin' && userContext.role !== 'superadmin')) {
+        return { success: false, error: 'Access denied: Administrative privileges required.' };
+      }
+      return await adminSuperpowers.batchDeleteRecords(args, userContext);
     }
 
     case 'admin_send_user_communication': {

@@ -149,6 +149,7 @@ CORE PLATFORM RULES:
    • You can inspect any user profile, view student support tickets with AI solutions, approve documents, create announcements, and generate deep real-time platform status reports.
    • SUPPORT TICKETS: When an admin requests to resolve or close a ticket (e.g. "resolve ticket 6ae6dbe375", "resolvbe this ticket"), call admin_manage_tickets with action "resolve" immediately!
    • BATCH DOCUMENT METADATA UPDATES: When an admin asks to change or update metadata across files (e.g. changing 'uploadedBy' from "Ankit Ghugtyal" to "StudyMyte Team", or changing subject, year, title), call admin_batch_update_document_metadata. Always display the complete audit report in your response with total files in system, total matched, total updated, and the table of modified items.
+   • AS-INSTRUCTED BULK RECORD DELETION: When an admin instructs you to delete or purge records to clean database storage (e.g. "delete seen notifications", "seen notifications delete kardo", "delete rejected documents", "delete resolved tickets", "delete old announcements"), call admin_bulk_delete_records. Always display the complete deletion and storage recovery report in your response with total records before, total deleted, remaining records, and recovered storage!
    • EMAIL DISPATCH DISABLED: AI direct emailing is permanently disabled. Never claim you can send emails. For communicating with users, use official In-App Notifications (admin_send_user_communication with channel "in_app").
 `;
 
@@ -898,6 +899,54 @@ ${u.recentUploads.length > 0 ? `#### 📤 Recent Uploads by ${u.name}:\n` + u.re
     return { text, resources, actions, ticket, toolsUsed, fallback: true };
   }
 
+  // 1.11 As-Instructed Bulk Record Deletion (Notifications, Rejected Docs, Resolved Tickets, etc.)
+  const isDeleteIntent = /(?:delete|del|hata\s*do|clear|purge|remove|hatao|saf\s*karo)\s+.*?(?:notification|notif|seen|read|ticket|document|notes|announcement|record|data)/i.test(clean) ||
+    /(?:notification|seen\s+notification|read\s+notification|ticket|document|notes|announcement)\s+.*?(?:delete|del|hata\s*do|clear|purge|remove|hatao|kardo|krdo)/i.test(clean) ||
+    /seen\s+(?:hai|he|hauu)\s+unhe\s+del/i.test(clean) ||
+    /(?:delete|del)\s+seen/i.test(clean);
+
+  if (isAdminUser && isDeleteIntent) {
+    toolsUsed.push('admin_bulk_delete_records');
+
+    let entity = 'notifications';
+    const filter = {};
+
+    if (/(?:document|doc|paper|notes?)/i.test(clean) && !/notification/i.test(clean)) {
+      entity = 'documents';
+      if (/rejected|disapproved/i.test(clean)) filter.status = 'rejected';
+      else if (/pending/i.test(clean)) filter.status = 'pending';
+    } else if (/(?:ticket|help\s*request|support)/i.test(clean) && !/notification/i.test(clean)) {
+      entity = 'help_requests';
+      if (/resolved|closed|solved/i.test(clean)) filter.status = 'resolved';
+    } else if (/(?:announcement|notice)/i.test(clean) && !/notification/i.test(clean)) {
+      entity = 'announcements';
+    } else {
+      // Default to notifications
+      entity = 'notifications';
+      if (/seen|read|dekhe\s*hue|padhe\s*hue/i.test(clean)) {
+        filter.read = true;
+      } else if (/unread|unseen/i.test(clean)) {
+        filter.read = false;
+      } else if (/all\s+notification/i.test(clean)) {
+        filter.all = true;
+      } else {
+        filter.read = true; // Safe default for notifications
+      }
+    }
+
+    const deleteRes = await adminSuperpowers.batchDeleteRecords({
+      entity,
+      filter,
+      dryRun: false,
+      reason: `Instruction from Admin: ${clean.slice(0, 100)}`
+    }, userContext);
+
+    text = `🗑️ **Database Record Cleanup Completed!**\n\n${deleteRes.reportSummary}\n\n*Storage recovered and audit log permanently saved.*`;
+    actions.push({ label: 'Open Admin Dashboard', path: '/admin' });
+    actions.push({ label: 'Check Storage Capacity', path: 'how is site doing' });
+    return { text, resources, actions, ticket, toolsUsed, fallback: true };
+  }
+
   // 2. Greetings
   if (/^(hi|hello|hey|namaste|greetings|good\s+morning|good\s+afternoon|good\s+evening|what'?s\s+up|wassup)\b/i.test(clean)) {
     text = `👋 Hello! I am **MYTEE**, the official AI assistant of StudyMyte.\n\nI am here to help you:\n• Find lecture notes, previous-year question papers (PYQs), and lab manuals\n• View documents directly in StudyMyte's inbuilt PDF viewer\n• Navigate to any section or page on the platform\n• Troubleshoot website issues or submit support tickets\n• Answer questions about your engineering subjects and coursework\n\nWhat are you studying or looking for today?`;
@@ -1282,7 +1331,7 @@ async function generateAiResponse({ message, history = [], userContext = null, p
 
   // Fast-track Admin Operational Commands for instant, deterministic execution
   const isAdminUser = userContext && (userContext.role === 'admin' || userContext.role === 'superadmin');
-  const isAdminOperationalQuery = /(site\s+status|platform\s+health|system\s+status|executive\s+report|admin\s+stats|admin\s+report|overview\s+report|resource\s+statistics|statistics\s+overview|resource\s+overview|search\s+user|show\s+user|user\s+details|find\s+user|list\s+users|pending\s+users|pending\s+educators|approve\s+user|support\s+tickets|help\s+requests|pending\s+tickets|(?:resolve|resolvbe|close|solve|mark\s+resolved)\s+(?:the\s+)?(?:ticket|issue|request)?|(?:resolve|resolvbe|close|solve)\s+(?:this\s+)?ticket|review\s+pending|pending\s+uploads|pending\s+documents|approve\s+doc|create\s+announcement|send\s+(?:in\s*app\s*)?(?:msg|message|notification)|send\s+email|email\s+to|batch\s+update|update\s+metadata|change\s+uploader|uploaded\s*by|meta\s*data)/i.test((message || '').trim());
+  const isAdminOperationalQuery = /(site\s+status|platform\s+health|system\s+status|executive\s+report|admin\s+stats|admin\s+report|overview\s+report|resource\s+statistics|statistics\s+overview|resource\s+overview|search\s+user|show\s+user|user\s+details|find\s+user|list\s+users|pending\s+users|pending\s+educators|approve\s+user|support\s+tickets|help\s+requests|pending\s+tickets|(?:resolve|resolvbe|close|solve|mark\s+resolved)\s+(?:the\s+)?(?:ticket|issue|request)?|(?:resolve|resolvbe|close|solve)\s+(?:this\s+)?ticket|review\s+pending|pending\s+uploads|pending\s+documents|approve\s+doc|create\s+announcement|send\s+(?:in\s*app\s*)?(?:msg|message|notification)|send\s+email|email\s+to|batch\s+update|update\s+metadata|change\s+uploader|uploaded\s*by|meta\s*data|delete\s+seen|del\s+seen|seen\s+notification|delete\s+notification|del\s+notification|purge|cleanup)/i.test((message || '').trim());
 
   if (isAdminUser && isAdminOperationalQuery) {
     const fallbackRes = await runLocalFallbackEngine(message, history, userContext, personalityMode);
@@ -1388,6 +1437,7 @@ Admins and Superadmins can access the AI fully, and you have direct autonomous a
 4. IN-APP MESSAGES & EMAILS: You can send in-app messages (notifications) and direct emails to specific users according to admin instructions using admin_send_user_communication.
 5. STATUS & STATS REPORT: You can generate comprehensive, real-time executive platform health and analytics reports using admin_get_site_status_report.
 6. BATCH DOCUMENT METADATA UPDATES: You can bulk update or reassign metadata (uploadedBy, subject, year, title) across site documents using admin_batch_update_document_metadata. Always display the complete audit report with total files in system, total matched, total updated, and the table of modified items.
+7. AS-INSTRUCTED BULK RECORD DELETION: You can bulk delete or purge records as instructed by the admin to keep database storage free (e.g. deleting seen notifications, old announcements, rejected documents, resolved tickets) using admin_bulk_delete_records. Always display the full deletion and storage recovery report.
 Execute these tools immediately when requested by the administrator to make their work fast and seamless!
 `;
           }
