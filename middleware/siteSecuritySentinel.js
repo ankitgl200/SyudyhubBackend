@@ -66,6 +66,28 @@ const TRAVERSAL_PATTERNS = [
   /boot\.ini/i
 ];
 
+// Burp Suite Collaborator & Out-of-band OAST exploitation patterns
+const COLLABORATOR_PATTERNS = [
+  /burpcollaborator\.net/i,
+  /oastify\.com/i,
+  /interact\.sh/i,
+  /bxss\.me/i
+];
+
+// Automated hacking tools and scanner User-Agents
+const SCANNER_USER_AGENTS = [
+  /\bsqlmap\b/i,
+  /\bnikto\b/i,
+  /\bdirbuster\b/i,
+  /\bgobuster\b/i,
+  /\bwfuzz\b/i,
+  /\bacunetix\b/i,
+  /\bhavij\b/i,
+  /\bburpcollaborator\b/i,
+  /\barachni\b/i,
+  /\bnessus\b/i
+];
+
 function inspectValueForThreat(val, path = '') {
   if (val === null || val === undefined) return null;
 
@@ -113,6 +135,18 @@ function inspectValueForThreat(val, path = '') {
           score: 8.5,
           category: 'NOSQL_INJECTION_PROBE',
           reason: `NoSQL MongoDB injection operator detected in [${path}]`,
+          flaggedPayload: val.slice(0, 300)
+        };
+      }
+    }
+
+    // 5. Check Burp Collaborator / Out-of-band SSRF payloads
+    for (const cp of COLLABORATOR_PATTERNS) {
+      if (cp.test(val)) {
+        return {
+          score: 9.5,
+          category: 'BURP_COLLABORATOR_EXPLOIT',
+          reason: `Out-of-band Burp Collaborator / SSRF payload detected in [${path}]`,
           flaggedPayload: val.slice(0, 300)
         };
       }
@@ -190,6 +224,22 @@ async function siteSecuritySentinel(req, res, next) {
       reason: `Automated high-velocity request burst (${recentWindow.length} reqs / 5s)`,
       flaggedPayload: `Client IP ${clientIp} flooded ${recentWindow.length} requests in 5 seconds to ${urlPath}`
     };
+  }
+
+  // 2.5 Inspect Scanner User-Agents & Tools
+  if (!detectedThreat) {
+    const userAgent = req.headers['user-agent'] || '';
+    for (const uaPattern of SCANNER_USER_AGENTS) {
+      if (uaPattern.test(userAgent)) {
+        detectedThreat = {
+          score: 9.0,
+          category: 'AUTOMATED_SECURITY_SCANNER',
+          reason: `Automated vulnerability scanner/tool signature detected in User-Agent: ${userAgent.slice(0, 80)}`,
+          flaggedPayload: `User-Agent: ${userAgent}`
+        };
+        break;
+      }
+    }
   }
 
   // 3. Inspect Query Parameters
