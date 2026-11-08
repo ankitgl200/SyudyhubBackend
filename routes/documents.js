@@ -21,6 +21,7 @@ const {
   inspectPdfContent,
   processDuplicateDetection
 } = require('../services/duplicateEngine');
+const { applyStudyMyteWatermark } = require('../services/pdfWatermarkService');
 
 async function sendMulticastPushNotification(title, body, url) {
   try {
@@ -423,9 +424,20 @@ router.post('/upload', isStaff, (req, res) => {
       let fileSizeBytes = 0;
       let pdfQuality = { pageCount: 1, hasText: false, textLength: 0, qualityScore: 50 };
 
-      // Read buffer if file uploaded directly
+      // Read buffer if file uploaded directly and apply non-intrusive StudyMyte watermark
       if (req.file) {
-        fileBuffer = fs.readFileSync(req.file.path);
+        const isPdf = req.file.mimetype === 'application/pdf' || 
+          (req.file.originalname && req.file.originalname.toLowerCase().endsWith('.pdf'));
+        if (isPdf) {
+          const wmRes = await applyStudyMyteWatermark(req.file.path);
+          if (wmRes.success && wmRes.buffer) {
+            fileBuffer = wmRes.buffer;
+          } else {
+            fileBuffer = fs.readFileSync(req.file.path);
+          }
+        } else {
+          fileBuffer = fs.readFileSync(req.file.path);
+        }
         fileSizeBytes = fileBuffer.length;
         fileHash = computeFileHash(fileBuffer);
         pdfQuality = await inspectPdfContent(fileBuffer);
@@ -907,9 +919,20 @@ router.post('/contribute', auth, (req, res) => {
       let fileSizeBytes = 0;
       let pdfQuality = { pageCount: 1, hasText: false, textLength: 0, qualityScore: 50 };
 
-      // Read buffer if file uploaded directly
+      // Read buffer if file uploaded directly and apply non-intrusive StudyMyte watermark
       if (req.file) {
-        fileBuffer = fs.readFileSync(req.file.path);
+        const isPdf = req.file.mimetype === 'application/pdf' || 
+          (req.file.originalname && req.file.originalname.toLowerCase().endsWith('.pdf'));
+        if (isPdf) {
+          const wmRes = await applyStudyMyteWatermark(req.file.path);
+          if (wmRes.success && wmRes.buffer) {
+            fileBuffer = wmRes.buffer;
+          } else {
+            fileBuffer = fs.readFileSync(req.file.path);
+          }
+        } else {
+          fileBuffer = fs.readFileSync(req.file.path);
+        }
         fileSizeBytes = fileBuffer.length;
         fileHash = computeFileHash(fileBuffer);
         pdfQuality = await inspectPdfContent(fileBuffer);
