@@ -65,11 +65,16 @@ function parseUserAgent(userAgent, ip = 'Unknown') {
 // @route   POST api/auth/signup
 // @desc    Register user (instant approval for student, admin approval for educator/admin)
 router.post('/signup', signupLimiter, async (req, res) => {
-  const { name, phone, email, password, role } = req.body;
+  const { name, phone, email, password, role, agreedToTerms } = req.body;
 
   // Simple validation
   if (!name || !phone || !password || !role) {
     return res.status(400).json({ message: 'Please enter all fields' });
+  }
+
+  // Terms & Privacy Acceptance validation
+  if (agreedToTerms === false || agreedToTerms === 'false') {
+    return res.status(400).json({ message: 'You must read and agree to the Terms of Service and Privacy Policy to register.' });
   }
 
   // Proper email validation
@@ -117,7 +122,9 @@ router.post('/signup', signupLimiter, async (req, res) => {
       email: normalizedEmail,
       password: hashedPassword,
       role: finalRole,
-      approved
+      approved,
+      agreedToTerms: agreedToTerms !== false,
+      termsAgreedAt: new Date()
     });
     
     await newUser.save();

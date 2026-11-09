@@ -58,6 +58,14 @@ const UserSchema = new Schema({
     type: [String],
     default: []
   },
+  agreedToTerms: {
+    type: Boolean,
+    default: true
+  },
+  termsAgreedAt: {
+    type: Date,
+    default: Date.now
+  },
   isBlocked: {
     type: Boolean,
     default: false,
