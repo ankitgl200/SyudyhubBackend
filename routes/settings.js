@@ -9,6 +9,63 @@ router.get('/:key', async (req, res) => {
   try {
     const setting = await SystemSetting.findOne({ key: req.params.key });
     if (!setting) {
+      if (req.params.key === 'ads_config') {
+        return res.json({
+          value: {
+            enabled: false,
+            ads: [
+              {
+                id: 1,
+                name: 'Ad 1',
+                enabled: true,
+                format: 'html',
+                title: 'Google AdSense',
+                description: 'Official Partner Advertisement',
+                imageUrl: '',
+                linkUrl: '',
+                buttonText: '',
+                htmlCode: '<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-1950443996388582" crossorigin="anonymous"></script>\n<ins class="adsbygoogle" style="display:block" data-ad-client="ca-pub-1950443996388582" data-ad-slot="6380389639" data-ad-format="auto" data-full-width-responsive="true"></ins>\n<script>(adsbygoogle = window.adsbygoogle || []).push({});</script>'
+              },
+              {
+                id: 2,
+                name: 'Ad 2',
+                enabled: false,
+                format: 'banner',
+                title: 'Partner with StudyMyte',
+                description: 'Promote your educational tools, hackathons, and courses to verified engineering scholars.',
+                imageUrl: '',
+                linkUrl: 'mailto:support@studymyte.tech?subject=Sponsorship%20Inquiry',
+                buttonText: 'Advertise With Us',
+                htmlCode: ''
+              },
+              {
+                id: 3,
+                name: 'Ad 3',
+                enabled: false,
+                format: 'banner',
+                title: 'Master Data Structures & Algorithms',
+                description: 'Curated semester revision materials, interview cheat sheets, and coding resources.',
+                imageUrl: '',
+                linkUrl: 'https://studymyte.tech',
+                buttonText: 'Explore Resources ➔',
+                htmlCode: ''
+              },
+              {
+                id: 4,
+                name: 'Ad 4',
+                enabled: false,
+                format: 'banner',
+                title: 'Join Our Contributor Community',
+                description: 'Share your hand-written lecture notes and previous year papers to help your peers.',
+                imageUrl: '',
+                linkUrl: 'https://studymyte.tech/#/my-contributions',
+                buttonText: 'Upload Notes ➔',
+                htmlCode: ''
+              }
+            ]
+          }
+        });
+      }
       return res.status(404).json({ message: 'Setting not found' });
     }
     res.json({ value: setting.value });
