@@ -8,7 +8,15 @@ const { GoogleGenAI } = require('@google/genai');
 const config = require('../../config');
 const { TOOL_DEFINITIONS, executeTool } = require('./myteeTools');
 const { parseResourceQuery, searchResources } = require('./resourceSearchService');
-const { getOfficialWebsiteInfo, findNavigationRoute, getTroubleshootingGuide } = require('./websiteKnowledgeService');
+const { 
+  getOfficialWebsiteInfo, 
+  findNavigationRoute, 
+  getTroubleshootingGuide, 
+  getSystemKnowledgePrompt, 
+  PLATFORM_ARCHITECTURE, 
+  PLATFORM_FEATURES, 
+  ADMIN_PANEL_SYSTEM 
+} = require('./websiteKnowledgeService');
 const { createSupportTicket, getUserTickets } = require('./supportTicketService');
 const { generateAdminReport, getWebsiteOverview } = require('./adminAnalyticsService');
 const { initiatePasswordReset, verifyResetOtp, completePasswordResetForUser } = require('./inChatAuthService');
@@ -986,9 +994,65 @@ ${u.recentUploads.length > 0 ? `#### 📤 Recent Uploads by ${u.name}:\n` + u.re
   if (clean.includes('who created') || clean.includes('who is the owner') || clean.includes('who developed') || clean.includes('founder') || clean.includes('team') || clean.includes('about studymyte')) {
     toolsUsed.push('get_official_website_info');
     const info = await getOfficialWebsiteInfo();
-    const creatorList = info.creators.map(c => `• **${c.name}** — ${c.role} (${c.contribution})`).join('\n');
-    text = `StudyMyte is an academic initiative built to provide verified, high-quality university study resources for engineering students.\n\n**Founders & Core Team**:\n${creatorList}\n\nYou can read our complete mission and history on the official About page.`;
+    const creatorList = info.creators.map(c => `• **${c.name}** — ${c.role}\n  *${c.contribution}*`).join('\n\n');
+    text = `### 👥 StudyMyte Founders & Core Leadership Team\n\nStudyMyte was founded and built specifically for engineering students by a dedicated team:\n\n${creatorList}\n\nYou can read our complete mission, vision, and journey on the official About page!`;
     actions.push({ label: 'View About Page', path: '/about' });
+    actions.push({ label: 'Browse Notes', path: '/notes' });
+    return { text, resources, actions, ticket, toolsUsed, fallback: true };
+  }
+
+  // 5.2 Tech Stack & Codebase Architecture query
+  if (/(tech\s*stack|codebase|technologies|how\s+(?:is|was)\s+(?:the\s+)?site\s+built|architecture|framework|backend|frontend|database|hosting)\b/i.test(clean)) {
+    toolsUsed.push('get_platform_architecture');
+    text = `### 💻 StudyMyte Technical Architecture & Codebase Stack\n\n` +
+      `StudyMyte is engineered with a high-performance modern web stack designed for zero bloat, instant page transitions, and bank-grade document security:\n\n` +
+      `• **Frontend Engine**: Pure Vanilla JavaScript (ES6+ modular SPA architecture). No heavy frontend framework bloat (no React/Angular overhead), ensuring sub-second rendering even on 2G/3G mobile connections.\n` +
+      `• **Styling & UI**: Modern CSS3 custom variables (Theme tokens), responsive Flexbox & CSS Grid, and **Anime.js** for fluid micro-interactions and modal physics.\n` +
+      `• **Document Engine**: Custom in-browser Canvas-rendered PDF viewer with dynamic zoom, full-screen mode, and real-time **StudyMyte anti-theft watermarking**.\n` +
+      `• **Backend REST API**: Node.js LTS with Express.js server architecture, modular routes, and WAF security middleware.\n` +
+      `• **Database**: **MongoDB Atlas** with Mongoose ODM schemas for Users, Documents, Announcements, Support Tickets, and Telemetry.\n` +
+      `• **Storage & Streaming**: **Cloudinary CDN** for fast, resilient, and compressed PDF document streaming.\n` +
+      `• **Authentication & Security**: JWT (JSON Web Tokens), bcrypt password hashing, and active rate limiting.\n` +
+      `• **AI Core (MYTEE)**: Powered by Google Gemini AI with intelligent RAG vector chunking, function calling, and real-time SSE token streaming.\n` +
+      `• **Hosting & Deployments**: Frontend hosted on **Vercel Edge Network** (studymyte.tech); Backend hosted on **Render** cloud services.`;
+    actions.push({ label: 'Explore Features', path: '/about' });
+    actions.push({ label: 'Browse Notes', path: '/notes' });
+    return { text, resources, actions, ticket, toolsUsed, fallback: true };
+  }
+
+  // 5.3 Platform Features & Inbuilt Tools query
+  if (/(what\s+features|features\s+of\s+site|pdf\s*viewer|watermark|front\s*page\s*generator|lab\s*generator|ad\s*system|monetization|themes?|dark\s*mode)\b/i.test(clean)) {
+    toolsUsed.push('get_platform_features');
+    text = `### 🚀 StudyMyte Core Platform Features & Built-in Tools\n\n` +
+      `StudyMyte is packed with student-first academic utilities:\n\n` +
+      `1. **Protected Inbuilt PDF Viewer**: Read any lecture note, PYQ, or lab manual directly in your browser with zoom, full-screen, and zero phone storage consumption.\n` +
+      `2. **Practical Lab Front Page Generator**: Available in \`#/resources\`—generates custom, official print-ready A4 PDF Lab Manual Front Pages with college logo, student details, and experiment index in seconds!\n` +
+      `3. **StudyMyte Watermark Shield**: Non-intrusive diagonal branding automatically applied to protect student submissions from commercial misuse.\n` +
+      `4. **Smart PYQ Exam Analyzer**: Computes 60%–70%+ repeat question predictions from past papers with step-by-step model answers.\n` +
+      `5. **Multi-Ad Monetization Engine**: 4-slot vertical stacked ad system, cleanly separated from login/signup pages.\n` +
+      `6. **Theme & Font Customizer**: Light Mode, Dark Ops HUD, Scandinavian Clean, and 6 developer-friendly fonts in \`#/appearance\`.\n` +
+      `7. **Installable PWA App**: Install StudyMyte as a native app on Android, iOS, or Desktop for one-tap access.`;
+    actions.push({ label: 'Lab Front Page Generator', path: '/resources' });
+    actions.push({ label: 'Customize Themes', path: '/appearance' });
+    actions.push({ label: 'Browse Notes', path: '/notes' });
+    return { text, resources, actions, ticket, toolsUsed, fallback: true };
+  }
+
+  // 5.4 Admin Panel Structure & Moderation query
+  if (/(admin\s*panel|admin\s*tabs|how\s+admin\s+works|moderation|red\s*dot|approvals\s*tab)\b/i.test(clean)) {
+    toolsUsed.push('get_admin_system_info');
+    text = `### 🛡️ StudyMyte Super Admin Panel Architecture\n\n` +
+      `The Super Admin Panel (\`#/admin\`) is a desktop-optimized, 10-tab control center:\n\n` +
+      `• **Approvals (🔴 Alert Dot)**: Instant review queue for student-contributed notes and papers with Approve/Reject actions.\n` +
+      `• **User Directory**: Search registered students, manage roles, promote admins, delete accounts, or export to CSV.\n` +
+      `• **Contributions (🔴 Alert Dot)**: Live tracking of all student upload submissions.\n` +
+      `• **Help & Support (🔴 Alert Dot)**: Manage and resolve open student support tickets.\n` +
+      `• **Send Notice & Sent History**: Broadcast platform-wide alerts with real-time push notifications.\n` +
+      `• **Security Logs**: Real-time WAF telemetry, blocked attack IPs, and brute-force attempts.\n` +
+      `• **User Reviews**: Public student testimonial moderation.\n` +
+      `• **Ads & Monetization**: Master Switch and individual 4-slot sponsor & Google AdSense controls.\n` +
+      `• **Storage Capacity**: Live infrastructure gauges for Cloudinary, MongoDB Atlas, and EmailJS quotas.`;
+    actions.push({ label: 'Open Admin Panel', path: '/admin' });
     return { text, resources, actions, ticket, toolsUsed, fallback: true };
   }
 
@@ -1427,6 +1491,7 @@ async function generateAiResponse({ message, history = [], userContext = null, p
           currentIteration++;
 
           let dynamicInstruction = SYSTEM_INSTRUCTION;
+          dynamicInstruction += '\n\n' + getSystemKnowledgePrompt();
           if (userContext && (userContext.role === 'admin' || userContext.role === 'superadmin')) {
             dynamicInstruction += `\n\n## ⚡ ADMINISTRATIVE SUPERPOWERS ACTIVE:
 You are in direct executive assistance mode for an authenticated StudyMyte Administrator (${userContext.name || 'Admin'}, Role: ${userContext.role}).
