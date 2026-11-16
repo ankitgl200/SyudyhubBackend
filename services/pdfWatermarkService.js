@@ -129,11 +129,7 @@ async function applyStudyMyteWatermark(input) {
     const modifiedBytes = await pdfDoc.save();
     const resultBuffer = Buffer.from(modifiedBytes);
 
-    // If input was a file on disk, overwrite it with the watermarked version
-    if (filePath) {
-      await fs.promises.writeFile(filePath, resultBuffer);
-    }
-
+    // Keep source disk files pristine - do NOT overwrite disk uploads to avoid XRef tree corruption
     return {
       success: true,
       buffer: resultBuffer,

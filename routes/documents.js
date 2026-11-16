@@ -21,7 +21,7 @@ const {
   inspectPdfContent,
   processDuplicateDetection
 } = require('../services/duplicateEngine');
-const { applyStudyMyteWatermark } = require('../services/pdfWatermarkService');
+// Note: PDF viewing utilizes dynamic client-side canvas watermarking to ensure uploaded binaries are preserved without XRef corruption
 
 async function sendMulticastPushNotification(title, body, url) {
   try {
@@ -424,20 +424,9 @@ router.post('/upload', isStaff, (req, res) => {
       let fileSizeBytes = 0;
       let pdfQuality = { pageCount: 1, hasText: false, textLength: 0, qualityScore: 50 };
 
-      // Read buffer if file uploaded directly and apply non-intrusive StudyMyte watermark
+      // Read buffer if file uploaded directly - preserve original binary integrity to prevent PDF XRef/page tree corruption
       if (req.file) {
-        const isPdf = req.file.mimetype === 'application/pdf' || 
-          (req.file.originalname && req.file.originalname.toLowerCase().endsWith('.pdf'));
-        if (isPdf) {
-          const wmRes = await applyStudyMyteWatermark(req.file.path);
-          if (wmRes.success && wmRes.buffer) {
-            fileBuffer = wmRes.buffer;
-          } else {
-            fileBuffer = fs.readFileSync(req.file.path);
-          }
-        } else {
-          fileBuffer = fs.readFileSync(req.file.path);
-        }
+        fileBuffer = fs.readFileSync(req.file.path);
         fileSizeBytes = fileBuffer.length;
         fileHash = computeFileHash(fileBuffer);
         pdfQuality = await inspectPdfContent(fileBuffer);
@@ -919,20 +908,9 @@ router.post('/contribute', auth, (req, res) => {
       let fileSizeBytes = 0;
       let pdfQuality = { pageCount: 1, hasText: false, textLength: 0, qualityScore: 50 };
 
-      // Read buffer if file uploaded directly and apply non-intrusive StudyMyte watermark
+      // Read buffer if file uploaded directly - preserve original binary integrity to prevent PDF XRef/page tree corruption
       if (req.file) {
-        const isPdf = req.file.mimetype === 'application/pdf' || 
-          (req.file.originalname && req.file.originalname.toLowerCase().endsWith('.pdf'));
-        if (isPdf) {
-          const wmRes = await applyStudyMyteWatermark(req.file.path);
-          if (wmRes.success && wmRes.buffer) {
-            fileBuffer = wmRes.buffer;
-          } else {
-            fileBuffer = fs.readFileSync(req.file.path);
-          }
-        } else {
-          fileBuffer = fs.readFileSync(req.file.path);
-        }
+        fileBuffer = fs.readFileSync(req.file.path);
         fileSizeBytes = fileBuffer.length;
         fileHash = computeFileHash(fileBuffer);
         pdfQuality = await inspectPdfContent(fileBuffer);
