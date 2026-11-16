@@ -9,6 +9,14 @@ router.get('/:key', async (req, res) => {
   try {
     const setting = await SystemSetting.findOne({ key: req.params.key });
     if (!setting) {
+      if (req.params.key === 'site_meta') {
+        return res.json({
+          value: {
+            version: 'v1.3.28',
+            lastUpdated: '16 Nov 2026'
+          }
+        });
+      }
       if (req.params.key === 'ads_config') {
         return res.json({
           value: {
@@ -76,9 +84,13 @@ router.get('/:key', async (req, res) => {
 });
 
 // @route   PUT api/settings/:key
-// @desc    Create or update a system setting (Admin only)
+// @desc    Create or update a system setting (Admin only, Super Admin for site_meta)
 router.put('/:key', isAdmin, async (req, res) => {
   try {
+    if (req.params.key === 'site_meta' && req.user.role !== 'superadmin') {
+      return res.status(403).json({ message: 'Access denied: Only Super Admin can update site settings' });
+    }
+
     const { value } = req.body;
     if (value === undefined) {
       return res.status(400).json({ message: 'Value is required' });
