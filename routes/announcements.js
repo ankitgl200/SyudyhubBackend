@@ -14,8 +14,8 @@ const getAbsoluteUrl = (req, url) => {
 };
 
 // @route   GET api/announcements
-// @desc    Get all announcements (requires auth)
-router.get('/', auth, async (req, res) => {
+// @desc    Get all announcements (public)
+router.get('/', async (req, res) => {
   try {
     const list = await Announcement.find().sort({ createdAt: -1 });
     res.json(list.map(a => ({
