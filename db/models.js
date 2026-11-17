@@ -339,7 +339,8 @@ const NotificationSchema = new Schema({
   },
   createdAt: {
     type: Date,
-    default: Date.now
+    default: Date.now,
+    expires: 60 * 60 * 24 * 30 // 30 days retention for user notifications
   }
 });
 
@@ -534,7 +535,8 @@ const DuplicatePaperGroupSchema = new Schema({
   createdAt: {
     type: Date,
     default: Date.now,
-    index: true
+    index: true,
+    expires: 60 * 60 * 24 * 90 // 90 days retention for duplicate paper review groups
   },
   updatedAt: {
     type: Date,
@@ -577,14 +579,19 @@ const SystemSettingSchema = new Schema({
 });
 const SystemSetting = mongoose.model('SystemSetting', SystemSettingSchema);
 
-// Permanent EmailJS Dispatch Log (Audited Monthly Usage)
+// Audited EmailJS Dispatch Log (Rolling 60-day window for quota auditing)
 const EmailDispatchLogSchema = new Schema({
   purpose: { type: String, default: 'otp' },
   recipientMasked: { type: String, default: '' },
   serviceId: { type: String, default: '' },
   templateId: { type: String, default: '' },
   status: { type: String, enum: ['sent', 'failed'], default: 'sent' },
-  sentAt: { type: Date, default: Date.now, index: true }
+  sentAt: {
+    type: Date,
+    default: Date.now,
+    index: true,
+    expires: 60 * 60 * 24 * 60 // 60 days retention (covers current & previous month quota tracking)
+  }
 }, { timestamps: true });
 const EmailDispatchLog = mongoose.model('EmailDispatchLog', EmailDispatchLogSchema);
 
@@ -672,7 +679,9 @@ const MyteeFeedbackSchema = new Schema({
   },
   createdAt: {
     type: Date,
-    default: Date.now
+    default: Date.now,
+    index: true,
+    expires: 60 * 60 * 24 * 60 // 60 days retention for user feedback
   }
 });
 
@@ -777,7 +786,8 @@ const MyteeAuditLogSchema = new Schema({
   createdAt: {
     type: Date,
     default: Date.now,
-    index: true
+    index: true,
+    expires: 60 * 60 * 24 * 90 // 90 days retention for administrative audit logs
   }
 });
 MyteeAuditLogSchema.index({ createdAt: -1 });

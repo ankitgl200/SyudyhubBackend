@@ -190,10 +190,40 @@ app.use((err, req, res, next) => {
   res.status(500).json({ message: 'Internal Server Error' });
 });
 
+// Ensure MongoDB TTL indexes are synced without IndexOptionsConflict
+async function ensureTtlIndexes() {
+  try {
+    const { DuplicatePaperGroup, EmailDispatchLog, MyteeAuditLog, MyteeFeedback, Notification } = require('./db/models');
+    const syncList = [
+      { model: DuplicatePaperGroup, indexName: 'createdAt_1', ttl: 60 * 60 * 24 * 90 },
+      { model: EmailDispatchLog, indexName: 'sentAt_1', ttl: 60 * 60 * 24 * 60 },
+      { model: MyteeAuditLog, indexName: 'createdAt_1', ttl: 60 * 60 * 24 * 90 },
+      { model: MyteeFeedback, indexName: 'createdAt_1', ttl: 60 * 60 * 24 * 60 },
+      { model: Notification, indexName: 'createdAt_1', ttl: 60 * 60 * 24 * 30 }
+    ];
+
+    for (const item of syncList) {
+      try {
+        const indexes = await item.model.collection.indexes();
+        const existing = indexes.find(idx => idx.name === item.indexName);
+        if (existing && existing.expireAfterSeconds !== item.ttl) {
+          await item.model.collection.dropIndex(item.indexName);
+          console.log(`[TTL Sync] Dropped outdated index ${item.indexName} on ${item.model.collection.name}`);
+        }
+      } catch (e) {
+        // Collection or index may not exist yet; safe to ignore
+      }
+    }
+  } catch (err) {
+    console.warn('[TTL Sync] Note:', err.message);
+  }
+}
+
 // Connect to MongoDB & Start Server
 mongoose.connect(config.MONGODB_URI)
   .then(async () => {
     console.log('Connected to MongoDB successfully.');
+    await ensureTtlIndexes();
     await seedDefaultData();
     
     const PORT = config.PORT;
