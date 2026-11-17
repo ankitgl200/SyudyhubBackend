@@ -13,7 +13,8 @@ router.get('/:key', async (req, res) => {
         return res.json({
           value: {
             version: 'v1.3.28',
-            lastUpdated: '16 Nov 2026'
+            lastUpdated: '16 Nov 2026',
+            donationPopupEnabled: true
           }
         });
       }
@@ -76,6 +77,11 @@ router.get('/:key', async (req, res) => {
       }
       return res.status(404).json({ message: 'Setting not found' });
     }
+
+    if (req.params.key === 'site_meta' && setting.value && setting.value.donationPopupEnabled === undefined) {
+      setting.value.donationPopupEnabled = true;
+    }
+
     res.json({ value: setting.value });
   } catch (err) {
     console.error('Error fetching setting:', err);
@@ -87,8 +93,8 @@ router.get('/:key', async (req, res) => {
 // @desc    Create or update a system setting (Admin only, Super Admin for site_meta)
 router.put('/:key', isAdmin, async (req, res) => {
   try {
-    if (req.params.key === 'site_meta' && req.user.role !== 'superadmin') {
-      return res.status(403).json({ message: 'Access denied: Only Super Admin can update site settings' });
+    if (req.params.key === 'site_meta' && req.user.role !== 'superadmin' && req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Access denied: Only Super Admin and Admin can update site settings' });
     }
 
     const { value } = req.body;
